@@ -1,6 +1,5 @@
 const fs = require("fs");
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
 const Student = require("../Modals/Student");
 
 const MONGO_URI = "mongodb://localhost:27017/Attendence-System";
@@ -13,29 +12,40 @@ async function importStudents() {
     const raw = fs.readFileSync("./studentsdata.json", "utf-8");
     const students = JSON.parse(raw);
 
-    const docs = await Promise.all(
-      students.map(async (s) => ({
-        studentId: s.id,
-        name: s.name,
-        email: s.email,
-        passwordHash: await bcrypt.hash(s.password, 10),
-        prn: s.prn,
-        rollNo: s.roll_no,
-        year: Number(s.year),
-        division: s.division,
-        branch: s.branch,
-        subjects: s.subjects || [],
-        labs: s.lab || [],
-        role: "student",
-      }))
-    );
+    console.log(`📦 Found ${students.length} students in JSON file`);
 
-    await Student.insertMany(docs, { ordered: false });
+    // ✅ CORRECT FIELD NAMES - matching your Student schema
+    const docs = students.map((s) => ({
+      id: s.id,              // ✅ 'id' not 'studentId'
+      name: s.name,
+      email: s.email || null,
+      password: s.password,  // ✅ 'password' not 'passwordHash'
+      prn: s.prn || "",
+      roll_no: s.roll_no,    // ✅ 'roll_no' not 'rollNo'
+      year: s.year || "",
+      division: s.division || "",
+      branch: s.branch || "",
+      subjects: Array.isArray(s.subjects) ? s.subjects : [],
+      lab: Array.isArray(s.lab) ? s.lab : [],  // ✅ 'lab' not 'labs'
+      image: s.image || null
+    }));
 
-    console.log(`🎉 Imported ${docs.length} students`);
+    // Delete existing students
+    const deleteResult = await Student.deleteMany({});
+    console.log(`🗑️ Deleted ${deleteResult.deletedCount} existing students`);
+
+    // Insert new students
+    const insertResult = await Student.insertMany(docs, { ordered: false });
+    console.log(`🎉 Imported ${insertResult.length} students successfully`);
+
     process.exit(0);
   } catch (err) {
-    console.error("❌ Student import failed:", err.message);
+    console.error("❌ Student import failed:");
+    console.error("Message:", err.message);
+    if (err.code === 11000) {
+      console.error("Duplicate key error - check for duplicate student IDs");
+    }
+    console.error("Stack:", err.stack);
     process.exit(1);
   }
 }

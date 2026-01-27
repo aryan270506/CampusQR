@@ -5,23 +5,16 @@ const Admin = require("../Modals/Admin");
 const Student = require("../Modals/Student");
 const Teacher = require("../Modals/Teacher");
 const Parent = require("../Modals/Parent");
-const bcrypt = require("bcryptjs");
-
 
 console.log("🔥 ADMIN ROUTES FILE LOADED");
 
 // ===============================
-// 🔥 UPLOAD PARENTS - NO PASSWORD HASHING
+// 🔥 UPLOAD PARENTS
 // ===============================
 router.post("/upload-parents", async (req, res) => {
   console.log("====================================");
   console.log("🔵 UPLOAD PARENTS ENDPOINT HIT!");
   console.log("====================================");
-  console.log("📦 Received data:", {
-    type: typeof req.body,
-    isArray: Array.isArray(req.body),
-    length: req.body?.length
-  });
 
   try {
     const data = req.body;
@@ -31,7 +24,8 @@ router.post("/upload-parents", async (req, res) => {
       console.log("❌ Data is not an array");
       return res.status(400).json({
         success: false,
-        message: "Invalid data format. JSON array required.",
+        message: "Invalid data format. Expected a JSON array.",
+        error: "DATA_NOT_ARRAY"
       });
     }
 
@@ -40,45 +34,63 @@ router.post("/upload-parents", async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Parent list cannot be empty",
+        error: "EMPTY_ARRAY"
       });
     }
 
     console.log(`✅ Received ${data.length} parents`);
 
-    // 2️⃣ Validate required fields
+    // 2️⃣ Validate required fields with detailed error reporting
+    const errors = [];
     for (let i = 0; i < data.length; i++) {
       const p = data[i];
-      if (!p.id || !p.name || !p.password) {
-        console.log(`❌ Missing fields at index ${i}:`, p);
-        return res.status(400).json({
-          success: false,
-          message: `Parent at index ${i} missing required fields`,
+      const missingFields = [];
+      
+      if (!p.id) missingFields.push("id");
+      if (!p.name) missingFields.push("name");
+      if (!p.password) missingFields.push("password");
+      
+      if (missingFields.length > 0) {
+        errors.push({
+          index: i,
+          parentId: p.id || "unknown",
+          parentName: p.name || "unknown",
+          missingFields: missingFields
         });
       }
     }
+
+    if (errors.length > 0) {
+      console.log(`❌ Validation errors found in ${errors.length} parents:`, errors);
+      return res.status(400).json({
+        success: false,
+        message: `Found ${errors.length} parent(s) with missing required fields`,
+        error: "MISSING_REQUIRED_FIELDS",
+        details: errors
+      });
+    }
+
     console.log("✅ All parents have required fields");
 
-    // 🔥 3️⃣ DELETE ALL EXISTING PARENTS
+    // 3️⃣ DELETE ALL EXISTING PARENTS
     console.log("🗑️ Deleting existing parents...");
     const deleteResult = await Parent.deleteMany({});
     console.log(`✅ Deleted ${deleteResult.deletedCount} parents`);
 
-    // 4️⃣ PREPARE DOCUMENTS (NO HASHING)
+    // 4️⃣ PREPARE DOCUMENTS
     console.log("📝 Preparing parent documents...");
     const parentsToInsert = data.map((p) => ({
       id: p.id,
       name: p.name,
-      email: p.email,
-      password: p.password, // ✅ Store password as-is (no hashing)
-
-      prn: p.prn,
-      roll_no: p.roll_no,
-      year: Number(p.year),
-      division: p.division,
-      branch: p.branch,
-      subjects: p.subjects || [],
-      lab: p.lab || [],
-
+      email: p.email || "",
+      password: p.password,
+      prn: p.prn || "",
+      roll_no: p.roll_no || "",
+      year: p.year ? Number(p.year) : 0,
+      division: p.division || "",
+      branch: p.branch || "",
+      subjects: Array.isArray(p.subjects) ? p.subjects : [],
+      lab: Array.isArray(p.lab) ? p.lab : [],
       role: "parent",
     }));
 
@@ -86,7 +98,7 @@ router.post("/upload-parents", async (req, res) => {
 
     // 5️⃣ INSERT INTO DATABASE
     console.log("💾 Inserting into database...");
-    const insertResult = await Parent.insertMany(parentsToInsert);
+    const insertResult = await Parent.insertMany(parentsToInsert, { ordered: false });
     console.log(`✅ Inserted ${insertResult.length} parents`);
 
     console.log("====================================");
@@ -96,24 +108,398 @@ router.post("/upload-parents", async (req, res) => {
     res.json({
       success: true,
       message: "Parents uploaded successfully",
-      count: parentsToInsert.length,
+      count: insertResult.length,
     });
 
   } catch (err) {
     console.log("====================================");
     console.error("❌ UPLOAD ERROR:");
     console.error("Message:", err.message);
+    console.error("Code:", err.code);
     console.error("Stack:", err.stack);
     console.log("====================================");
     
+    // Handle specific MongoDB errors
+    let errorMessage = "Failed to upload parents";
+    let errorCode = "UNKNOWN_ERROR";
+    
+    if (err.code === 11000) {
+      errorMessage = "Duplicate parent ID found. Each parent must have a unique ID.";
+      errorCode = "DUPLICATE_KEY";
+    } else if (err.name === "ValidationError") {
+      errorMessage = "Data validation failed: " + err.message;
+      errorCode = "VALIDATION_ERROR";
+    }
+    
     res.status(500).json({
       success: false,
-      message: "Failed to upload parents",
-      error: err.message,
+      message: errorMessage,
+      error: errorCode,
+      details: err.message,
     });
   }
 });
 
+// ===============================
+// 🔥 UPLOAD STUDENTS
+// ===============================
+router.post("/upload-students", async (req, res) => {
+  console.log("====================================");
+  console.log("🔵 UPLOAD STUDENTS ENDPOINT HIT!");
+  console.log("====================================");
+
+  try {
+    const data = req.body;
+
+    // 1️⃣ Validate JSON array
+    if (!Array.isArray(data)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid data format. Expected a JSON array.",
+        error: "DATA_NOT_ARRAY"
+      });
+    }
+
+    if (data.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Student list cannot be empty",
+        error: "EMPTY_ARRAY"
+      });
+    }
+
+    console.log(`✅ Received ${data.length} students`);
+
+    // 2️⃣ Validate required fields
+    const errors = [];
+    for (let i = 0; i < data.length; i++) {
+      const s = data[i];
+      const missingFields = [];
+      
+      if (!s.id) missingFields.push("id");
+      if (!s.name) missingFields.push("name");
+      if (!s.password) missingFields.push("password");
+      
+      if (missingFields.length > 0) {
+        errors.push({
+          index: i,
+          studentId: s.id || "unknown",
+          studentName: s.name || "unknown",
+          missingFields: missingFields
+        });
+      }
+    }
+
+    if (errors.length > 0) {
+      console.log(`❌ Validation errors found in ${errors.length} students:`, errors);
+      return res.status(400).json({
+        success: false,
+        message: `Found ${errors.length} student(s) with missing required fields`,
+        error: "MISSING_REQUIRED_FIELDS",
+        details: errors
+      });
+    }
+
+    console.log("✅ All students have required fields");
+
+    // 3️⃣ DELETE ALL EXISTING STUDENTS 🔥
+    console.log("🗑️ Deleting existing students...");
+    const deleteResult = await Student.deleteMany({});
+    console.log(`✅ Deleted ${deleteResult.deletedCount} students`);
+
+    // 4️⃣ PREPARE DOCUMENTS
+    console.log("📝 Preparing student documents...");
+    const studentsToInsert = data.map((s) => ({
+      id: s.id,
+      name: s.name,
+      email: s.email || null,
+      password: s.password,
+      prn: s.prn || "",
+      roll_no: s.roll_no || "",
+      year: s.year || "",
+      division: s.division || "",
+      branch: s.branch || "",
+      subjects: Array.isArray(s.subjects) ? s.subjects : [],
+      lab: Array.isArray(s.lab) ? s.lab : [],
+      image: s.image || null
+    }));
+
+    console.log("✅ Documents prepared");
+
+    // 5️⃣ INSERT INTO DATABASE
+    console.log("💾 Inserting into database...");
+    const insertResult = await Student.insertMany(studentsToInsert, { ordered: false });
+    console.log(`✅ Inserted ${insertResult.length} students`);
+
+    console.log("====================================");
+    console.log("🎉 UPLOAD COMPLETE!");
+    console.log("====================================");
+
+    res.json({
+      success: true,
+      message: "Students uploaded successfully",
+      count: insertResult.length,
+    });
+
+  } catch (err) {
+    console.error("❌ UPLOAD STUDENTS ERROR:", err);
+    
+    let errorMessage = "Failed to upload students";
+    let errorCode = "UNKNOWN_ERROR";
+    
+    if (err.code === 11000) {
+      errorMessage = "Duplicate student ID found. Each student must have a unique ID.";
+      errorCode = "DUPLICATE_KEY";
+    } else if (err.name === "ValidationError") {
+      errorMessage = "Data validation failed: " + err.message;
+      errorCode = "VALIDATION_ERROR";
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: errorMessage,
+      error: errorCode,
+      details: err.message,
+    });
+  }
+});
+
+// ===============================
+// 🔥 UPLOAD TEACHERS
+// ===============================
+router.post("/upload-teachers", async (req, res) => {
+  console.log("====================================");
+  console.log("🔵 UPLOAD TEACHERS ENDPOINT HIT!");
+  console.log("====================================");
+
+  try {
+    const data = req.body;
+
+    // 1️⃣ Validate JSON array
+    if (!Array.isArray(data)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid data format. Expected a JSON array.",
+        error: "DATA_NOT_ARRAY"
+      });
+    }
+
+    if (data.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Teacher list cannot be empty",
+        error: "EMPTY_ARRAY"
+      });
+    }
+
+    console.log(`✅ Received ${data.length} teachers`);
+
+    // 2️⃣ Validate required fields
+    const errors = [];
+    for (let i = 0; i < data.length; i++) {
+      const t = data[i];
+      const missingFields = [];
+      
+      if (!t.id) missingFields.push("id");
+      if (!t.name) missingFields.push("name");
+      if (!t.password) missingFields.push("password");
+      
+      if (missingFields.length > 0) {
+        errors.push({
+          index: i,
+          teacherId: t.id || "unknown",
+          teacherName: t.name || "unknown",
+          missingFields: missingFields
+        });
+      }
+    }
+
+    if (errors.length > 0) {
+      console.log(`❌ Validation errors found in ${errors.length} teachers:`, errors);
+      return res.status(400).json({
+        success: false,
+        message: `Found ${errors.length} teacher(s) with missing required fields`,
+        error: "MISSING_REQUIRED_FIELDS",
+        details: errors
+      });
+    }
+
+    console.log("✅ All teachers have required fields");
+
+    // 3️⃣ DELETE ALL TEACHERS 🔥
+    console.log("🗑️ Deleting existing teachers...");
+    const deleteResult = await Teacher.deleteMany({});
+    console.log(`✅ Deleted ${deleteResult.deletedCount} teachers`);
+
+    // 4️⃣ PREPARE DOCUMENTS
+    console.log("📝 Preparing teacher documents...");
+    const teachersToInsert = data.map(t => ({
+      id: t.id,
+      name: t.name,
+      password: t.password,
+      years: Array.isArray(t.years) ? t.years : [],
+      divisions: Array.isArray(t.divisions) ? t.divisions : [],
+      subjects: typeof t.subjects === 'object' ? t.subjects : {},
+      course_codes: typeof t.course_codes === 'object' ? t.course_codes : {},
+      lab: typeof t.lab === 'object' ? t.lab : {},
+    }));
+
+    console.log("✅ Documents prepared");
+
+    // 5️⃣ INSERT INTO DATABASE
+    console.log("💾 Inserting into database...");
+    const insertResult = await Teacher.insertMany(teachersToInsert, { ordered: false });
+    console.log(`✅ Inserted ${insertResult.length} teachers`);
+
+    console.log("====================================");
+    console.log("🎉 UPLOAD COMPLETE!");
+    console.log("====================================");
+
+    res.json({
+      success: true,
+      message: "Teachers uploaded successfully",
+      count: insertResult.length,
+    });
+
+  } catch (err) {
+    console.error("❌ UPLOAD TEACHERS ERROR:", err);
+    
+    let errorMessage = "Failed to upload teachers";
+    let errorCode = "UNKNOWN_ERROR";
+    
+    if (err.code === 11000) {
+      errorMessage = "Duplicate teacher ID found. Each teacher must have a unique ID.";
+      errorCode = "DUPLICATE_KEY";
+    } else if (err.name === "ValidationError") {
+      errorMessage = "Data validation failed: " + err.message;
+      errorCode = "VALIDATION_ERROR";
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: errorMessage,
+      error: errorCode,
+      details: err.message,
+    });
+  }
+});
+
+// ===============================
+// 🔥 UPLOAD ADMINS
+// ===============================
+router.post("/upload-admins", async (req, res) => {
+  console.log("====================================");
+  console.log("🔵 UPLOAD ADMINS ENDPOINT HIT!");
+  console.log("====================================");
+
+  try {
+    const data = req.body;
+
+    // 1️⃣ Validate JSON array
+    if (!Array.isArray(data)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid data format. Expected a JSON array.",
+        error: "DATA_NOT_ARRAY"
+      });
+    }
+
+    if (data.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Admin list cannot be empty",
+        error: "EMPTY_ARRAY"
+      });
+    }
+
+    console.log(`✅ Received ${data.length} admins`);
+
+    // 2️⃣ Validate required fields
+    const errors = [];
+    for (let i = 0; i < data.length; i++) {
+      const a = data[i];
+      const missingFields = [];
+      
+      if (!a.id) missingFields.push("id");
+      if (!a.password) missingFields.push("password");
+      if (!a.email) missingFields.push("email");
+      if (!a.branch) missingFields.push("branch");
+      
+      if (missingFields.length > 0) {
+        errors.push({
+          index: i,
+          adminId: a.id || "unknown",
+          missingFields: missingFields
+        });
+      }
+    }
+
+    if (errors.length > 0) {
+      console.log(`❌ Validation errors found in ${errors.length} admins:`, errors);
+      return res.status(400).json({
+        success: false,
+        message: `Found ${errors.length} admin(s) with missing required fields`,
+        error: "MISSING_REQUIRED_FIELDS",
+        details: errors
+      });
+    }
+
+    console.log("✅ All admins have required fields");
+
+    // 3️⃣ DELETE ALL DB ADMINS (NOT SUPERADMIN)
+    console.log("🗑️ Deleting existing admins...");
+    const deleteResult = await Admin.deleteMany({});
+    console.log(`✅ Deleted ${deleteResult.deletedCount} admins`);
+
+    // 4️⃣ PREPARE DOCUMENTS
+    console.log("📝 Preparing admin documents...");
+    const adminsToInsert = data.map(a => ({
+      id: a.id,
+      email: a.email,
+      password: a.password,
+      branch: a.branch,
+      role: "admin"
+    }));
+
+    console.log("✅ Documents prepared");
+
+    // 5️⃣ INSERT INTO DATABASE
+    console.log("💾 Inserting into database...");
+    const insertResult = await Admin.insertMany(adminsToInsert, { ordered: false });
+    console.log(`✅ Inserted ${insertResult.length} admins`);
+
+    console.log("====================================");
+    console.log("🎉 UPLOAD COMPLETE!");
+    console.log("====================================");
+
+    res.json({
+      success: true,
+      message: "Admins uploaded successfully",
+      count: insertResult.length,
+    });
+
+  } catch (err) {
+    console.error("❌ UPLOAD ADMINS ERROR:", err);
+    
+    let errorMessage = "Failed to upload admins";
+    let errorCode = "UNKNOWN_ERROR";
+    
+    if (err.code === 11000) {
+      errorMessage = "Duplicate admin ID found. Each admin must have a unique ID.";
+      errorCode = "DUPLICATE_KEY";
+    } else if (err.name === "ValidationError") {
+      errorMessage = "Data validation failed: " + err.message;
+      errorCode = "VALIDATION_ERROR";
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: errorMessage,
+      error: errorCode,
+      details: err.message,
+    });
+  }
+});
 
 // =======================
 // ADMIN LOGIN
@@ -137,11 +523,17 @@ router.post("/admin/login", async (req, res) => {
     const admin = await Admin.findOne({ id });
 
     if (!admin) {
-      return res.status(401).json({ message: "Invalid admin ID" });
+      return res.status(401).json({ 
+        success: false,
+        message: "Invalid admin ID" 
+      });
     }
 
     if (admin.password !== password) {
-      return res.status(401).json({ message: "Invalid password" });
+      return res.status(401).json({ 
+        success: false,
+        message: "Invalid password" 
+      });
     }
 
     return res.json({
@@ -154,62 +546,57 @@ router.post("/admin/login", async (req, res) => {
 
   } catch (err) {
     console.error("❌ ADMIN LOGIN ERROR:", err);
-    return res.status(500).json({ message: "Login failed" });
+    return res.status(500).json({ 
+      success: false,
+      message: "Login failed",
+      error: err.message 
+    });
   }
 });
 
-router.post("/upload-students", async (req, res) => {
+// =======================
+// ALTERNATIVE LOGIN ROUTE
+// =======================
+router.post("/login", async (req, res) => {
+  const { id, password } = req.body;
+
   try {
-    const data = req.body;
+    const admin = await Admin.findOne({ id });
 
-    // 1️⃣ Validate JSON array
-    if (!Array.isArray(data)) {
-      return res.status(400).json({
-        message: "Invalid data format. JSON array required.",
+    if (!admin) {
+      return res.status(401).json({ 
+        success: false,
+        message: "Invalid admin ID" 
       });
     }
 
-    if (data.length === 0) {
-      return res.status(400).json({
-        message: "Student list cannot be empty",
+    if (admin.password !== password) {
+      return res.status(401).json({ 
+        success: false,
+        message: "Invalid password" 
       });
     }
 
-    // 2️⃣ Validate required fields
-    for (const s of data) {
-      if (!s.id || !s.name || !s.password) {
-        return res.status(400).json({
-          message: "Each student must have id, name, and password",
-        });
-      }
-    }
-
-    // 3️⃣ DELETE ALL EXISTING STUDENTS 🔥
-    await Student.deleteMany({});
-    console.log("🗑️ All old students deleted");
-
-    // 4️⃣ INSERT NEW STUDENTS
-    await Student.insertMany(data);
-    console.log(`✅ ${data.length} students inserted`);
-
-    res.json({
+    return res.json({
       success: true,
-      message: "Students uploaded successfully",
-      count: data.length,
+      role: "admin",
+      id: admin.id,
+      email: admin.email,
+      branch: admin.branch
     });
-
   } catch (err) {
-    console.error("❌ UPLOAD STUDENTS ERROR:", err);
-    res.status(500).json({
-      message: "Failed to upload students",
+    console.error("❌ ADMIN LOGIN ERROR:", err.message);
+    return res.status(500).json({ 
+      success: false,
+      message: "Login failed",
+      error: err.message 
     });
   }
 });
 
-router.get("/ping", (req, res) => {
-  res.send("ADMIN ROUTES OK");
-});
-
+// =======================
+// GET STUDENTS
+// =======================
 router.get("/students", async (req, res) => {
   const { year, division } = req.query;
 
@@ -227,39 +614,11 @@ router.get("/students", async (req, res) => {
     });
   } catch (err) {
     console.error("❌ FETCH STUDENTS ERROR:", err.message);
-    res.status(500).json({ message: "Failed to fetch students" });
-  }
-});
-
-
-// =======================
-// ADMIN LOGIN
-// =======================
-router.post("/login", async (req, res) => {
-  const { id, password } = req.body;
-
-  try {
-    const admin = await Admin.findOne({ id });
-
-    if (!admin) {
-      return res.status(401).json({ message: "Invalid admin ID" });
-    }
-
-    // ⚠️ Plain-text check (temporary)
-    if (admin.password !== password) {
-      return res.status(401).json({ message: "Invalid password" });
-    }
-
-    return res.json({
-      success: true,
-      role: "admin",
-      id: admin.id,
-      email: admin.email,
-      branch: admin.branch
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to fetch students",
+      error: err.message 
     });
-  } catch (err) {
-    console.error("❌ ADMIN LOGIN ERROR:", err.message);
-    return res.status(500).json({ message: "Login failed" });
   }
 });
 
@@ -287,142 +646,33 @@ router.get("/me/:id", async (req, res) => {
     );
 
     if (!admin) {
-      return res.status(404).json({ message: "Admin not found" });
+      return res.status(404).json({ 
+        success: false,
+        message: "Admin not found" 
+      });
     }
 
     res.json(admin);
 
   } catch (err) {
     console.error("❌ ADMIN PROFILE ERROR:", err.message);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-// ===============================
-// 🔥 UPLOAD ADMINS (JSON ONLY)
-// ===============================
-router.post("/upload-admins", async (req, res) => {
-  try {
-    const data = req.body;
-
-    // 1️⃣ Validate JSON array
-    if (!Array.isArray(data)) {
-      return res.status(400).json({
-        message: "Invalid data format. JSON array required",
-      });
-    }
-
-    if (data.length === 0) {
-      return res.status(400).json({
-        message: "Admin list cannot be empty",
-      });
-    }
-
-    // 2️⃣ Validate required fields
-    for (const a of data) {
-      if (!a.id || !a.password || !a.email || !a.branch) {
-        return res.status(400).json({
-          message: "Each admin must have id, email, password, branch",
-        });
-      }
-    }
-
-    // 3️⃣ DELETE ALL REAL ADMINS (NOT SUPERADMIN)
-    await Admin.deleteMany({});
-    console.log("🗑️ All DB admins deleted");
-
-    // 4️⃣ INSERT NEW ADMINS
-    await Admin.insertMany(
-      data.map(a => ({
-        id: a.id,
-        email: a.email,
-        password: a.password, // (plain for now)
-        branch: a.branch,
-        role: "admin"
-      }))
-    );
-
-    console.log(`✅ ${data.length} admins inserted`);
-
-    res.json({
-      success: true,
-      message: "Admins uploaded successfully",
-      count: data.length,
-    });
-
-  } catch (err) {
-    console.error("❌ UPLOAD ADMINS ERROR:", err);
-    res.status(500).json({
-      message: "Failed to upload admins",
+    res.status(500).json({ 
+      success: false,
+      message: "Server error",
+      error: err.message 
     });
   }
 });
 
-
-
-// ===============================
-// 🔥 UPLOAD TEACHERS (JSON ONLY)
-// ===============================
-router.post("/upload-teachers", async (req, res) => {
-  try {
-    const data = req.body;
-
-    // 1️⃣ Validate JSON array
-    if (!Array.isArray(data)) {
-      return res.status(400).json({
-        message: "Invalid data format. JSON array required",
-      });
-    }
-
-    if (data.length === 0) {
-      return res.status(400).json({
-        message: "Teacher list cannot be empty",
-      });
-    }
-
-    // 2️⃣ Validate required fields
-    for (const t of data) {
-      if (!t.id || !t.name || !t.password) {
-        return res.status(400).json({
-          message: "Each teacher must have id, name, and password",
-        });
-      }
-    }
-
-    // 3️⃣ DELETE ALL TEACHERS 🔥
-    await Teacher.deleteMany({});
-    console.log("🗑️ All teachers deleted");
-
-    // 4️⃣ INSERT NEW TEACHERS
-    await Teacher.insertMany(
-      data.map(t => ({
-        id: t.id,
-        name: t.name,
-        password: t.password, // (plain for now)
-        years: t.years || [],
-        divisions: t.divisions || [],
-        subjects: t.subjects || {},
-        course_codes: t.course_codes || {},
-        lab: t.lab || {},
-      }))
-    );
-
-    console.log(`✅ ${data.length} teachers inserted`);
-
-    res.json({
-      success: true,
-      message: "Teachers uploaded successfully",
-      count: data.length,
-    });
-
-  } catch (err) {
-    console.error("❌ UPLOAD TEACHERS ERROR:", err);
-    res.status(500).json({
-      message: "Failed to upload teachers",
-    });
-  }
+// =======================
+// HEALTH CHECK
+// =======================
+router.get("/ping", (req, res) => {
+  res.json({
+    success: true,
+    message: "ADMIN ROUTES OK",
+    timestamp: new Date().toISOString()
+  });
 });
-
-
 
 module.exports = router;
