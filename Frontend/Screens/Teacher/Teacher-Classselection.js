@@ -45,58 +45,45 @@ useFocusEffect(
 
   // Fetch teacher's assigned years and divisions from Firebase
   const fetchTeacherData = async () => {
-    try {
-      setLoading(true);
-      
-      // Get teacher ID from AsyncStorage
-      const teacherId = await AsyncStorage.getItem('teacherId');
-      
-      if (!teacherId) {
-        Alert.alert('Error', 'Teacher ID not found. Please login again.');
-        navigation.replace('LoginScreen');
-        return;
-      }
+  try {
+    setLoading(true);
 
+    const teacherId = await AsyncStorage.getItem("teacherId");
 
-      // Fetch teacher data from Firebase
-      const teacherRef = ref(db, `teachers/${teacherId}`);
-      const snapshot = await get(teacherRef);
-
-      if (snapshot.exists()) {
-  const teacherData = snapshot.val();
-
-  // 🔥 THIS WAS MISSING
-  setTeacherFullData(teacherData);
-
-  // Extract years
-  const teacherYears = teacherData.years || [];
-  const yearLabels = teacherYears.map(year => {
-    switch (year) {
-      case 1: return '1st Year';
-      case 2: return '2nd Year';
-      case 3: return '3rd Year';
-      case 4: return '4th Year';
-      default: return `${year}th Year`;
+    if (!teacherId) {
+      Alert.alert("Error", "Teacher ID not found. Please login again.");
+      navigation.replace("LoginScreen");
+      return;
     }
-  });
-  setClasses(yearLabels);
 
-  // Extract divisions
-  const teacherDivisions = teacherData.divisions || [];
-  const divisionLabels = teacherDivisions.map(div => `Div ${div}`);
-  setSections(divisionLabels);
-}
- else {
-        Alert.alert('Error', 'Teacher data not found');
-      }
+    // 🔥 FETCH FROM MONGODB BACKEND
+    const response = await api.get(`/api/teacher/me/${teacherId}`);
+    const teacherData = response.data;
 
-    } catch (error) {
-      console.error('❌ Error fetching teacher data:', error);
-      Alert.alert('Error', 'Failed to load teacher data. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    setTeacherFullData(teacherData);
+
+    // Years → UI labels
+    const yearLabels = (teacherData.years || []).map(year =>
+      year === 1 ? "1st Year" :
+      year === 2 ? "2nd Year" :
+      year === 3 ? "3rd Year" : "4th Year"
+    );
+    setClasses(yearLabels);
+
+    // Divisions → UI labels
+    const divisionLabels = (teacherData.divisions || []).map(
+      div => `Div ${div}`
+    );
+    setSections(divisionLabels);
+
+  } catch (error) {
+    console.error("❌ Error fetching teacher data:", error);
+    Alert.alert("Error", "Failed to load teacher data.");
+  } finally {
+    setLoading(false);
+  }
+};
+
 
 
   useEffect(() => {

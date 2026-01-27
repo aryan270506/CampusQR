@@ -34,6 +34,10 @@ import AttendanceScreen from './Screens/Student/Student-Record.js';
 import StudentQRScannerScreen from './Screens/Student/Qr-Scanner.js';
 import StudentProfile from './Screens/Student/Student-Profile.js';
 
+
+// Parent Screens
+import ParentAttendanceScreen from './Screens/Parents/ParentDashboard.js';
+
 const Stack = createNativeStackNavigator();
 
 export default function App() {
@@ -107,6 +111,9 @@ export default function App() {
           <Stack.Screen name="StudentAttendanceProfile" component={StudentAttendanceProfile} options={{ headerShown: false }} />
           <Stack.Screen name="AdminProfile" component={AdminProfile} options={{ headerShown: false }} />
           <Stack.Screen name="ClassAttendanceRecord" component={ClassAttendanceRecord} options={{ headerShown: false }} />
+
+          {/* Parent */}
+          <Stack.Screen name="ParentAttendanceScreen" component={ParentAttendanceScreen} options={{ headerShown: false }} />
 
         </Stack.Navigator>
 

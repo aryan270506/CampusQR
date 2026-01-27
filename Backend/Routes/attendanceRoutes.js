@@ -11,6 +11,22 @@ router.get("/test", (req, res) => {
   res.json({ msg: "Attendance routes working ✅" });
 });
 
+router.get("/sessions", async (req, res) => {
+  try {
+    const { year, division } = req.query;
+    
+    const sessions = await AttendanceSession.find({
+      year: Number(year),
+      division: String(division),
+    }).sort({ createdAt: -1 });
+
+    res.json({ sessions });
+  } catch (err) {
+    console.error("❌ Fetch sessions failed:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 /* =====================================================
    🟢 CREATE ATTENDANCE SESSION (TEACHER)
 ===================================================== */

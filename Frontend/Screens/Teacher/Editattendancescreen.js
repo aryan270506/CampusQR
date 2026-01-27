@@ -9,6 +9,7 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  FlatList,
 } from 'react-native';
 import { ref, get } from "firebase/database";
 import { db } from "../firebase";
@@ -21,31 +22,6 @@ export default function EditAttendanceScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
 
-  // Fetch students from Firebase based on year and division
-  const fetchStudentsFromFirebase = async (year, division) => {
-    try {
-      const snapshot = await get(ref(db, "students"));
-
-      if (!snapshot.exists()) return [];
-
-      const data = snapshot.val();
-
-      // Filter students by year + division
-      return Object.entries(data)
-        .map(([key, student]) => ({
-          ...student,
-          studentId: student.id || key, // Ensure studentId exists
-        }))
-        .filter(student =>
-          String(student.year) === String(year) &&
-          student.division === division
-        );
-    } catch (error) {
-      console.error("Error fetching students from Firebase:", error);
-      return [];
-    }
-  };
-
   // Load attendance data on mount
   useEffect(() => {
     loadAttendance();
@@ -55,50 +31,67 @@ export default function EditAttendanceScreen({ route, navigation }) {
     try {
       setLoading(true);
 
-      // Extract year from className (e.g., "3rd Year" -> 3)
+      // 1️⃣ Extract year from className
       const year =
         className.startsWith("1") ? 1 :
         className.startsWith("2") ? 2 :
         className.startsWith("3") ? 3 : 4;
 
-      // Extract division from sectionName (e.g., "Section A" -> "A")
-      const division = sectionName.split(" ")[1] || sectionName;
+      // 2️⃣ Extract division
+      const division = sectionName.split(" ")[1];
 
-      console.log(`Loading attendance for Year ${year}, Division ${division}, Session ${sessionId}`);
+      console.log("📘 Loading attendance:", { year, division, sessionId });
 
-      // 1. Get all students from Firebase
-      const allStudents = await fetchStudentsFromFirebase(year, division);
+      // 3️⃣ FETCH STUDENTS FROM MONGODB
+      const studentsRes = await api.get(
+        `/api/teacher/students?year=${year}&division=${division}`
+      );
 
-      if (allStudents.length === 0) {
+      const allStudents = studentsRes.data;
+
+      if (!allStudents.length) {
         Alert.alert("No Students", "No students found for this class.");
         setLoading(false);
         return;
       }
 
-      // 2. Get present students from MongoDB
-      const res = await api.get(`/api/attendance/session/${sessionId}`);
-      const presentIds = res.data.presentStudents || [];
+      // 4️⃣ FETCH PRESENT STUDENTS FROM SESSION
+      const sessionRes = await api.get(
+        `/api/attendance/session/${sessionId}`
+      );
 
-      console.log(`Found ${allStudents.length} students, ${presentIds.length} present`);
+      const presentIds = sessionRes.data.presentStudents || [];
+      console.log("✅ Present student IDs:", presentIds);
 
-      // 3. Merge data
-      const merged = allStudents.map(student => ({
-          id: student.studentId,
-          studentId: student.studentId,
-          rollNo: student.studentId
-            ? String(student.studentId).slice(-3).padStart(3, "0")
-            : "---",
-          name: student.name || "Unknown",
-          status: presentIds.includes(student.studentId)
-            ? "present"
-            : "absent",
-        }));
+      // 5️⃣ MERGE DATA WITH PROPER ROLL NUMBER EXTRACTION
+      const merged = allStudents.map(student => {
+        // Get roll_no from student data
+        const fullRollNo = student.roll_no || "";
+        
+        // Extract just the number from roll_no (e.g., "SY-B2-28" → "28")
+        let rollCallNumber = "?";
+        if (fullRollNo) {
+          const parts = fullRollNo.split("-");
+          rollCallNumber = parts[parts.length - 1] || "?";
+        }
 
+        console.log(`Student ${student.name}: full=${fullRollNo}, extracted=${rollCallNumber}`);
 
+        return {
+          studentId: student.id,
+          name: student.name,
+          rollNo: fullRollNo,           // Keep full roll number for reference
+          rollCallNumber: rollCallNumber, // Just the number for display
+          status: presentIds.includes(student.id) ? "present" : "absent",
+        };
+      });
+
+      console.log("📊 Merged students:", merged.length);
       setStudents(merged);
+      
     } catch (err) {
-      console.error("Load attendance error:", err);
-      Alert.alert("Error", `Failed to load attendance: ${err.message}`);
+      console.error("❌ Load attendance error:", err);
+      Alert.alert("Error", "Failed to load attendance");
     } finally {
       setLoading(false);
     }
@@ -107,6 +100,8 @@ export default function EditAttendanceScreen({ route, navigation }) {
   // Toggle individual student attendance
   const toggleAttendance = async (studentId, isPresent) => {
     try {
+      console.log(`🔄 Toggling attendance for student ${studentId}, currently ${isPresent ? 'present' : 'absent'}`);
+      
       setUpdating(true);
 
       if (isPresent) {
@@ -115,26 +110,29 @@ export default function EditAttendanceScreen({ route, navigation }) {
           sessionId,
           studentId,
         });
+        console.log(`✅ Marked ${studentId} as absent`);
       } else {
         // Make present
         await api.post("/api/attendance/manual/add", {
           sessionId,
           studentId,
         });
+        console.log(`✅ Marked ${studentId} as present`);
       }
 
-      // Update UI instantly
+      // Update UI instantly - ONLY for this specific student
       setStudents(prev =>
-        prev.map(s =>
-          s.studentId === studentId
-            ? { ...s, status: isPresent ? "absent" : "present" }
-            : s
-        )
+        prev.map(s => {
+          if (s.studentId === studentId) {
+            console.log(`Updating student ${studentId} from ${s.status} to ${isPresent ? "absent" : "present"}`);
+            return { ...s, status: isPresent ? "absent" : "present" };
+          }
+          return s; // Return unchanged for all other students
+        })
       );
 
-      console.log(`✅ Toggled attendance for ${studentId}`);
     } catch (err) {
-      console.error("Toggle attendance error:", err);
+      console.error("❌ Toggle attendance error:", err);
       Alert.alert("Error", `Failed to update attendance: ${err.message}`);
     } finally {
       setUpdating(false);
@@ -166,7 +164,7 @@ export default function EditAttendanceScreen({ route, navigation }) {
       Alert.alert("Success", "All students marked present");
       console.log(`✅ Marked all ${studentIds.length} students present`);
     } catch (err) {
-      console.error("Mark all present error:", err);
+      console.error("❌ Mark all present error:", err);
       Alert.alert("Error", `Failed to mark all present: ${err.message}`);
     } finally {
       setUpdating(false);
@@ -195,7 +193,7 @@ export default function EditAttendanceScreen({ route, navigation }) {
       Alert.alert("Success", "All students marked absent");
       console.log(`✅ Marked all students absent`);
     } catch (err) {
-      console.error("Mark all absent error:", err);
+      console.error("❌ Mark all absent error:", err);
       Alert.alert("Error", `Failed to mark all absent: ${err.message}`);
     } finally {
       setUpdating(false);
@@ -212,7 +210,7 @@ export default function EditAttendanceScreen({ route, navigation }) {
     return students.filter(s => s.status === 'absent').length;
   };
 
-  // Handle save (optional - attendance is already saved to backend)
+  // Handle save
   const handleSave = () => {
     Alert.alert(
       'Attendance Saved',
@@ -225,6 +223,35 @@ export default function EditAttendanceScreen({ route, navigation }) {
       ]
     );
   };
+
+  // Render student item for 5-column grid
+  const renderStudentItem = ({ item }) => (
+    <TouchableOpacity
+      style={[
+        styles.studentItem,
+        item.status === 'present' ? styles.presentItem : styles.absentItem,
+        updating && styles.disabledItem,
+      ]}
+      onPress={() => {
+        console.log(`👆 Tapped on student ${item.studentId} (${item.name}) - Roll: ${item.rollCallNumber}`);
+        toggleAttendance(item.studentId, item.status === "present");
+      }}
+      disabled={updating}
+      activeOpacity={0.7}
+    >
+      <View style={styles.rollCircle}>
+        <Text style={[
+          styles.rollText,
+          item.status === 'present' ? styles.presentRollText : styles.absentRollText,
+        ]}>
+          {item.rollCallNumber}
+        </Text>
+      </View>
+      <Text style={styles.statusIndicator}>
+        {item.status === 'present' ? '✓' : '✗'}
+      </Text>
+    </TouchableOpacity>
+  );
 
   // Loading state
   if (loading) {
@@ -273,6 +300,21 @@ export default function EditAttendanceScreen({ route, navigation }) {
         </View>
       </View>
 
+      {/* Legend */}
+      <View style={styles.legendContainer}>
+        <View style={styles.legendItem}>
+          <View style={[styles.legendColor, { backgroundColor: '#dcfce7' }]} />
+          <Text style={styles.legendText}>Present</Text>
+        </View>
+        <View style={styles.legendItem}>
+          <View style={[styles.legendColor, { backgroundColor: '#fee2e2' }]} />
+          <Text style={styles.legendText}>Absent</Text>
+        </View>
+        <View style={styles.legendItem}>
+          <Text style={styles.legendText}>Tap roll number to toggle</Text>
+        </View>
+      </View>
+
       {/* Quick Actions */}
       <View style={styles.quickActions}>
         <TouchableOpacity
@@ -295,53 +337,21 @@ export default function EditAttendanceScreen({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Student List */}
-      <ScrollView
-        style={styles.scrollView}
+      {/* 5-Column Student Grid */}
+      <FlatList
+        data={students}
+        renderItem={renderStudentItem}
+        keyExtractor={(item) => item.studentId}
+        numColumns={5}
+        contentContainerStyle={styles.gridContainer}
+        columnWrapperStyle={styles.columnWrapper}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {students.length === 0 ? (
+        ListEmptyComponent={() => (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>No students found</Text>
           </View>
-        ) : (
-          students.map((student) => (
-            <View key={student.studentId} style={styles.studentCard}>
-              <View style={styles.studentInfo}>
-               <View style={styles.rollNoContainer}>
-  <Text style={styles.rollNo}>{student.rollNo}</Text>
-</View>
-
-                <Text style={styles.studentName}>{student.name}</Text>
-              </View>
-              
-              <TouchableOpacity
-                style={[
-                  styles.statusButton,
-                  student.status === 'present' ? styles.presentButton : styles.absentButton,
-                  updating && styles.disabledButton,
-                ]}
-                onPress={() => toggleAttendance(student.studentId, student.status === "present")}
-                disabled={updating}
-                activeOpacity={0.7}
-              >
-                <Text
-                  style={[
-                    styles.statusText,
-                    student.status === 'present' ? styles.presentStatusText : styles.absentStatusText,
-                  ]}
-                >
-                  {student.status === 'present' ? 'Present' : 'Absent'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ))
         )}
-
-        {/* Extra space at bottom */}
-        <View style={{ height: 100 }} />
-      </ScrollView>
+      />
 
       {/* Save Button */}
       <View style={styles.saveButtonContainer}>
@@ -450,11 +460,34 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginTop: 4,
   },
+  legendContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 20,
+    marginTop: 10,
+    paddingHorizontal: 20,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  legendColor: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+  },
+  legendText: {
+    fontSize: 12,
+    color: '#64748b',
+  },
   quickActions: {
     flexDirection: 'row',
     gap: 10,
     paddingHorizontal: 20,
     marginTop: 15,
+    marginBottom: 10,
   },
   quickActionButton: {
     flex: 1,
@@ -481,82 +514,67 @@ const styles = StyleSheet.create({
   disabledButton: {
     opacity: 0.5,
   },
-  scrollView: {
-    flex: 1,
-    marginTop: 15,
-  },
-  scrollContent: {
+  gridContainer: {
     paddingHorizontal: 20,
+    paddingBottom: 100,
+  },
+  columnWrapper: {
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  studentItem: {
+    width: 60,
+    height: 75,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 12,
+    padding: 8,
+  },
+  presentItem: {
+    backgroundColor: '#dcfce7',
+    borderWidth: 2,
+    borderColor: '#86efac',
+  },
+  absentItem: {
+    backgroundColor: '#fee2e2',
+    borderWidth: 2,
+    borderColor: '#fca5a5',
+  },
+  disabledItem: {
+    opacity: 0.5,
+  },
+  rollCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  rollText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  presentRollText: {
+    color: '#16a34a',
+  },
+  absentRollText: {
+    color: '#dc2626',
+  },
+  statusIndicator: {
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   emptyState: {
     padding: 40,
     alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
   },
   emptyStateText: {
     fontSize: 16,
     color: '#94a3b8',
-  },
-  studentCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  studentInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  rollNoContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#eef2ff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  rollNo: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#4f46e5',
-  },
-  studentName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1e293b',
-    flex: 1,
-  },
-  statusButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-    minWidth: 90,
-    alignItems: 'center',
-  },
-  presentButton: {
-    backgroundColor: '#dcfce7',
-  },
-  absentButton: {
-    backgroundColor: '#fee2e2',
-  },
-  statusText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  presentStatusText: {
-    color: '#16a34a',
-  },
-  absentStatusText: {
-    color: '#dc2626',
   },
   saveButtonContainer: {
     position: 'absolute',

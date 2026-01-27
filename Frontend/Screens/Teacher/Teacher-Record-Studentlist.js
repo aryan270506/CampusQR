@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,13 +9,12 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-} from 'react-native';
-import { ref, get } from "firebase/database";
-import { db } from "../firebase"; // Adjust path as needed
+} from "react-native";
+import api from "../../src/utils/axios";
 
 const StudentListScreen = ({ navigation, route }) => {
   const { className, sectionName } = route.params;
-  
+
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -23,77 +22,71 @@ const StudentListScreen = ({ navigation, route }) => {
     fetchStudents();
   }, []);
 
+  // ===============================
+  // FETCH STUDENTS FROM MONGODB
+  // ===============================
   const fetchStudents = async () => {
     try {
       setLoading(true);
 
-      // Convert className from "1st Year" to number 1
+      // "2nd Year" → 2
       const yearNumber = parseInt(className.match(/\d+/)[0]);
-      
-      // Convert sectionName from "Div A" to "A"
-      const division = sectionName.split(' ')[1];
 
-      console.log('📚 Fetching students for:', { year: yearNumber, division });
+      // "Div B" → "B"
+      const division = sectionName.split(" ")[1];
 
-      // Fetch all students from Firebase
-      const studentsRef = ref(db, 'students');
-      const snapshot = await get(studentsRef);
+      console.log("📚 Fetching students for:", {
+        year: yearNumber,
+        division,
+      });
 
-      if (snapshot.exists()) {
-        const allStudentsData = snapshot.val();
-        
-        // Filter students by year and division
-        const filteredStudents = Object.entries(allStudentsData)
-          .filter(([studentId, studentData]) => {
-            // Handle both string and number year values from Firebase
-            const studentYear = typeof studentData.year === 'string' 
-              ? parseInt(studentData.year) 
-              : studentData.year;
-            
-            console.log(`🔍 Checking student ${studentData.name}: year=${studentYear} (${typeof studentYear}), division=${studentData.division}`);
-            
-            return studentYear === yearNumber && 
-                   studentData.division === division;
-          })
-          .map(([studentId, studentData]) => ({
-            id: studentData.id || studentId,
-            name: studentData.name || 'Unknown',
-            email: studentData.email || '',
-            prn: studentData.prn || '',
-            division: studentData.division || '',
-            year: studentData.year || '',
-            subjects: studentData.subjects || [],
-          }));
+      const res = await api.get("/api/teacher/students", {
+        params: {
+          year: yearNumber,
+          division,
+        },
+      });
 
-        setStudents(filteredStudents);
-        console.log(`✅ Found ${filteredStudents.length} students`);
+      const formattedStudents = res.data.map((student) => {
+        const rollNo = student.roll_no || "";
+        const rollCallNumber = rollNo.split("-").pop();
 
-        if (filteredStudents.length === 0) {
-          Alert.alert(
-            'No Students Found',
-            `No students found for ${className} - ${sectionName}`,
-            [{ text: 'OK' }]
-          );
-        }
-      } else {
-        console.log('❌ No students data found in Firebase');
-        Alert.alert('Error', 'No students data found');
+        return {
+          id: student.id,
+          name: student.name,
+          prn: student.prn || "",
+          roll_no: rollNo,
+          roll_call: rollCallNumber,
+        };
+      });
+
+      setStudents(formattedStudents);
+
+      console.log(`✅ Loaded ${formattedStudents.length} students`);
+
+      if (formattedStudents.length === 0) {
+        Alert.alert(
+          "No Students Found",
+          `No students found for ${className} - ${sectionName}`
+        );
       }
-
     } catch (error) {
-      console.error('❌ Error fetching students:', error);
-      Alert.alert('Error', 'Failed to load students. Please try again.');
+      console.error("❌ Error fetching students:", error);
+      Alert.alert("Error", "Failed to load students.");
     } finally {
       setLoading(false);
     }
   };
 
+  // ===============================
+  // RENDER STUDENT
+  // ===============================
   const renderStudent = ({ item }) => (
     <TouchableOpacity
       style={styles.studentCard}
       activeOpacity={0.7}
       onPress={() =>
-        navigation.navigate('StudentRecordTeacher', {
+        navigation.navigate("StudentRecordTeacher", {
           studentId: item.id,
           studentName: item.name,
           studentData: item,
@@ -101,14 +94,13 @@ const StudentListScreen = ({ navigation, route }) => {
       }
     >
       <View style={styles.avatar}>
-        <Text style={styles.avatarText}>
-          {item.name.split(' ').map(n => n[0]).join('')}
-        </Text>
+        <Text style={styles.avatarText}>{item.roll_call || "?"}</Text>
       </View>
 
       <View style={styles.studentInfo}>
         <Text style={styles.studentName}>{item.name}</Text>
         <Text style={styles.studentDetails}>PRN: {item.prn}</Text>
+        <Text style={styles.studentDetails}>Roll No: {item.roll_no}</Text>
         <Text style={styles.studentDetails}>
           {className} - {sectionName}
         </Text>
@@ -116,28 +108,10 @@ const StudentListScreen = ({ navigation, route }) => {
     </TouchableOpacity>
   );
 
-  const renderEmptyComponent = () => (
-    <View style={styles.emptyContainer}>
-      <Text style={styles.emptyText}>No students found</Text>
-      <Text style={styles.emptySubtext}>
-        {className} - {sectionName}
-      </Text>
-    </View>
-  );
-
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#4f46e5" />
-        <View style={styles.header}>
-          <TouchableOpacity 
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
-          >
-            <Text style={styles.backButtonText}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Students</Text>
-        </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#4f46e5" />
           <Text style={styles.loadingText}>Loading students...</Text>
@@ -151,10 +125,7 @@ const StudentListScreen = ({ navigation, route }) => {
       <StatusBar barStyle="light-content" backgroundColor="#4f46e5" />
 
       <View style={styles.header}>
-        <TouchableOpacity 
-          onPress={() => navigation.goBack()}
-          style={styles.backButton}
-        >
+        <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Students</Text>
@@ -169,13 +140,15 @@ const StudentListScreen = ({ navigation, route }) => {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
-        ListEmptyComponent={renderEmptyComponent}
       />
     </SafeAreaView>
   );
 };
 
 export default StudentListScreen;
+
+
+
 
 const styles = StyleSheet.create({
   container: {

@@ -43,6 +43,37 @@ export default function StudentQRScannerScreen() {
     }
   }, [scanning, scanned]);
 
+
+  useEffect(() => {
+  const loadStudentData = async () => {
+    try {
+      const studentId = await AsyncStorage.getItem("studentId");
+
+      const res = await api.get(`/api/student/me/${studentId}`);
+
+      const {
+        year,
+        division,
+        subBranch,
+      } = res.data;
+
+      // ✅ Store EVERYTHING locally
+      await AsyncStorage.multiSet([
+        ["studentYear", year],
+        ["studentDivision", division],
+        ["studentSubBranch", subBranch],
+      ]);
+
+    } catch (err) {
+      console.error("Failed to load student data", err);
+    }
+  };
+
+  loadStudentData();
+}, []);
+
+  
+
   const showMessage = (title, message, onOk) => {
   if (Platform.OS === "web") {
     window.alert(`${title}\n\n${message}`);
@@ -76,21 +107,15 @@ export default function StudentQRScannerScreen() {
     return;
   }
 
-  if (
-    payload.type !== "ATTENDANCE_QR" ||
-    !payload.sessionId ||
-    !payload.issuedAt
-  ) {
+  const { type, sessionId, issuedAt } = payload;
+
+  if (!type || !sessionId || !issuedAt) {
     showInvalidQR();
     return;
   }
 
-  if (Date.now() - payload.issuedAt > 10000) {
-    showMessage(
-      "QR Expired ⏰",
-      "Please scan the latest QR",
-      resetScanner
-    );
+  if (Date.now() - issuedAt > 10000) {
+    showMessage("QR Expired ⏰", "Please scan the latest QR", resetScanner);
     return;
   }
 
@@ -98,38 +123,68 @@ export default function StudentQRScannerScreen() {
     const studentId = await AsyncStorage.getItem("studentId");
     const studentYear = await AsyncStorage.getItem("studentYear");
     const studentDivision = await AsyncStorage.getItem("studentDivision");
+    const studentBatch = await AsyncStorage.getItem("studentSubBranch"); // A1 / B1
 
-    if (!studentId || !studentYear || !studentDivision) {
+    /* ===============================
+       🧠 THEORY QR
+    ================================ */
+    if (type === "ATTENDANCE_QR") {
+      await api.post("/api/attendance/mark", {
+        sessionId,
+        studentId,
+        studentYear,
+        studentDivision,
+      });
+
       showMessage(
-        "Session Error ❌",
-        "Student data missing. Please login again.",
-        () => navigation.replace("Login")
+        "Attendance Marked ✅",
+        "You are marked present for this class."
       );
       return;
     }
 
-    await api.post("/api/attendance/mark", {
-      sessionId: payload.sessionId,
-      studentId,
-      studentYear,
-      studentDivision,
-    });
+    /* ===============================
+       🧪 LAB QR
+    ================================ */
+    if (type === "LAB_ATTENDANCE_QR") {
+      const { year, division, batch } = payload;
 
-    showMessage(
-      "Attendance Marked ✅",
-      "You are marked present for this class."
-    );
+      // 🚨 STRICT LAB VALIDATION
+      if (
+        String(studentYear) !== String(year) ||
+        String(studentDivision) !== String(division) ||
+        String(studentBatch) !== String(batch)
+      ) {
+        showMessage(
+          "Access Denied ❌",
+          `This lab is only for Batch ${batch}`
+        );
+        return;
+      }
+
+      await api.post("/api/lab-attendance/mark", {
+        sessionId,
+        studentId,
+        studentYear,
+        studentDivision,
+        studentBatch,
+      });
+
+      showMessage(
+        "Lab Attendance Marked ✅",
+        "You are marked present for this lab."
+      );
+      return;
+    }
+
+    // ❌ Unknown QR type
+    showInvalidQR();
+
   } catch (err) {
     if (err?.response?.status === 409) {
-      showMessage(
-        "Already Marked ⚠️",
-        "Attendance already recorded."
-      );
+      showMessage("Already Marked ⚠️", "Attendance already recorded.");
     } else if (err?.response?.status === 403) {
-      showMessage(
-        "Access Denied ❌",
-        "This QR is not for your class or division."
-      );
+      showMessage("Access Denied ❌", err.response.data.msg);
     } else {
       showMessage(
         "Attendance Failed ❌",
@@ -139,6 +194,8 @@ export default function StudentQRScannerScreen() {
     }
   }
 };
+
+
 
 
   const resetScanner = () => {

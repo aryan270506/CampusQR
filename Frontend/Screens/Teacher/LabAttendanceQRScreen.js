@@ -5,109 +5,223 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import QRCode from "react-native-qrcode-svg";
+import api from "../../src/utils/axios";
 
 export default function LabAttendanceQRScreen({ route, navigation }) {
-  const { year, division, batch, subject } = route.params;
+  const { sessionId, year, division, batch, subject } = route.params;
 
-  const [qrValue, setQrValue] = useState(null); // ✅ null, not ""
+  const [qrValue, setQrValue] = useState(null);
 
-  // 🔁 Change QR every 3 seconds
+  /* ===============================
+     GENERATE QR
+  ================================ */
+  const generateQR = () => {
+    const payload = {
+      type: "LAB_ATTENDANCE_QR",
+      sessionId,           // 🔥 IMPORTANT
+      year,
+      division,
+      batch,
+      issuedAt: Date.now(),
+    };
+
+    setQrValue(JSON.stringify(payload));
+  };
+
   useEffect(() => {
     generateQR();
     const interval = setInterval(generateQR, 3000);
     return () => clearInterval(interval);
   }, []);
 
-  const generateQR = () => {
-    const value = JSON.stringify({
-      year,
-      division,
-      batch,
-      subject,
-      timestamp: Date.now(),
-    });
+  /* ===============================
+     SAVE LAB ATTENDANCE
+     (Already saved via QR scans)
+  ================================ */
+  const handleSaveAttendance = async () => {
+    const confirm =
+      Platform.OS === "web"
+        ? window.confirm("Confirm lab attendance?")
+        : await new Promise(resolve => {
+            Alert.alert(
+              "Confirm Save",
+              "Attendance has already been recorded. Confirm and close?",
+              [
+                { text: "Cancel", onPress: () => resolve(false), style: "cancel" },
+                { text: "Confirm", onPress: () => resolve(true) },
+              ]
+            );
+          });
 
-    setQrValue(value); // ✅ always non-empty
+    if (!confirm) return;
+
+    console.log("✅ Lab attendance finalized:", sessionId);
+    alert("Lab attendance saved successfully");
+    navigation.goBack();
   };
 
-  const saveAttendance = async () => {
-  const session = {
-    id: Date.now().toString(),
-    year,
-    division,
-    batch,
-    subject,
-    createdAt: Date.now(), // 🔥 important
+  /* ===============================
+     DELETE LAB ATTENDANCE
+     (FULL DELETE FROM DB)
+  ================================ */
+  const handleDeleteAttendance = async () => {
+    const confirm =
+      Platform.OS === "web"
+        ? window.confirm(
+            "This will permanently delete this lab session. Continue?"
+          )
+        : await new Promise(resolve => {
+            Alert.alert(
+              "Delete Lab Attendance",
+              "This will permanently delete this lab session.",
+              [
+                { text: "Cancel", onPress: () => resolve(false), style: "cancel" },
+                {
+                  text: "Delete",
+                  style: "destructive",
+                  onPress: () => resolve(true),
+                },
+              ]
+            );
+          });
+
+    if (!confirm) return;
+
+    try {
+      console.log("🗑️ Deleting lab session:", sessionId);
+
+      await api.delete("/api/lab-attendance/session/delete", {
+        data: { sessionId },
+      });
+
+      alert("Lab attendance deleted permanently");
+      navigation.goBack();
+    } catch (err) {
+      console.error("❌ Delete lab attendance failed:", err);
+      alert("Failed to delete lab attendance");
+    }
   };
-
-  const existing =
-    JSON.parse(await AsyncStorage.getItem("labSessions")) || [];
-
-  await AsyncStorage.setItem(
-    "labSessions",
-    JSON.stringify([session, ...existing])
-  );
-
-  Alert.alert("Saved", "Lab attendance saved successfully");
-
-  // 🔁 GO BACK TO LAB ATTENDANCE SCREEN
-  navigation.goBack();
-};
-
 
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>Lab Attendance QR</Text>
+      <Text style={styles.title}>Live Lab Attendance</Text>
 
-      {/* ✅ Render QR only when value exists */}
-      {qrValue && <QRCode value={qrValue} size={220} />}
-
-      <View style={styles.infoBox}>
-        <Text>{year}</Text>
-        <Text>{division}</Text>
-        <Text>{batch}</Text>
-        <Text>{subject}</Text>
+      {/* Info */}
+      <View style={styles.infoCard}>
+        <Text style={styles.infoText}>🏫 Year {year}</Text>
+        <Text style={styles.infoText}>🧑‍🎓 Division {division}</Text>
+        <Text style={styles.infoText}>🧪 Batch {batch}</Text>
+        <Text style={styles.infoText}>📚 {subject}</Text>
       </View>
 
-      <TouchableOpacity style={styles.saveButton} onPress={saveAttendance}>
-        <Text style={styles.saveText}>Save Attendance</Text>
-      </TouchableOpacity>
+      {/* QR */}
+      <View style={styles.qrBox}>
+        {qrValue ? <QRCode value={qrValue} size={220} /> : <Text>Loading QR...</Text>}
+      </View>
+
+      <Text style={styles.hint}>
+        QR refreshes every 3 seconds  
+        Current + last 2 QRs are valid
+      </Text>
+
+      {/* Actions */}
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity style={styles.saveBtn} onPress={handleSaveAttendance}>
+          <Text style={styles.saveText}>Save Attendance</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteAttendance}>
+          <Text style={styles.deleteText}>Delete Lab Attendance</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
 
 
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
     backgroundColor: "#f8fafc",
+    padding: 20,
+    alignItems: "center",
   },
+
   title: {
-    fontSize: 22,
+    fontSize: 28,
     fontWeight: "700",
-    marginBottom: 20,
+    color: "#1e293b",
+    marginTop: 20,
   },
-  infoBox: {
+
+  infoCard: {
+    backgroundColor: "#eef2ff",
+    padding: 16,
+    borderRadius: 14,
+    width: "100%",
     marginTop: 20,
     alignItems: "center",
-    gap: 4,
   },
-  saveButton: {
-    marginTop: 30,
-    backgroundColor: "#4f46e5",
-    paddingVertical: 14,
-    paddingHorizontal: 30,
-    borderRadius: 10,
-  },
-  saveText: {
-    color: "#fff",
-    fontSize: 16,
+
+  infoText: {
+    fontSize: 18,
     fontWeight: "600",
+    color: "#3730a3",
+    marginVertical: 2,
+  },
+
+  deleteBtn: {
+  backgroundColor: "#fee2e2",
+  paddingVertical: 14,
+  borderRadius: 14,
+  alignItems: "center",
+  borderWidth: 1,
+  borderColor: "#fecaca",
+  marginTop: 12,
+},
+
+deleteText: {
+  color: "#b91c1c",
+  fontSize: 16,
+  fontWeight: "700",
+},
+
+
+  qrBox: {
+    backgroundColor: "#ffffff",
+    padding: 20,
+    borderRadius: 20,
+    marginTop: 30,
+    elevation: 4,
+  },
+
+  hint: {
+    marginTop: 16,
+    fontSize: 13,
+    color: "#64748b",
+    textAlign: "center",
+  },
+
+  buttonContainer: {
+    width: "100%",
+    marginTop: 30,
+  },
+
+  saveBtn: {
+    backgroundColor: "#4f46e5",
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: "center",
+  },
+
+  saveText: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "700",
   },
 });

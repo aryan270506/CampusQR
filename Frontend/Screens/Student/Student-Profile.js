@@ -10,8 +10,7 @@ import {
   Dimensions,
   StatusBar,
   ActivityIndicator,
-  Alert,
-  Platform
+  Alert
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ref, get, update } from "firebase/database";
@@ -23,8 +22,11 @@ import { disconnectSocket } from "../../src/services/socket";
 import api from "../../src/utils/axios";
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import { Platform } from "react-native";
 
 const { width } = Dimensions.get('window');
+
+
 
 const StudentProfile = ({ route }) => {
   const navigation = useNavigation();
@@ -111,208 +113,134 @@ const StudentProfile = ({ route }) => {
     }
   };
 
-  const loadStudentData = async () => {
-    try {
-      if (route?.params?.studentData) {
-        setStudentData(route.params.studentData);
-        setLoading(false);
-        return;
-      }
+  
 
-      const storedStudentKey = await AsyncStorage.getItem('studentKey');
-      if (storedStudentKey) {
-        const studentRef = ref(db, `students/${storedStudentKey}`);
-        const snapshot = await get(studentRef);
-        
-        if (snapshot.exists()) {
-          const data = {
-            ...snapshot.val(),
-            firebaseKey: storedStudentKey
-          };
-          setStudentData(data);
-        }
-      }
-    } catch (error) {
-      console.error("Error loading student data:", error);
-      alert("Failed to load student data");
-    } finally {
-      setLoading(false);
+  const loadStudentData = async () => {
+  try {
+    setLoading(true);
+
+    // If passed from navigation (already Mongo-based)
+    if (route?.params?.studentData) {
+      setStudentData(route.params.studentData);
+      return;
     }
-  };
+
+    const studentId = await AsyncStorage.getItem("studentId");
+    if (!studentId) throw new Error("Student ID missing");
+
+    const res = await api.get(`/api/student/me/${studentId}`);
+    setStudentData(res.data);
+
+  } catch (error) {
+    console.error("Error loading student data:", error.message);
+    alert("Failed to load student data");
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   // 📸 Image Compression Function
   const compressImage = async (uri) => {
-    let quality = 0.9;
-    let compressed = null;
-    let finalSize = Infinity;
+  let quality = 0.9;
+  let width = 1000;
 
-    const result = await manipulateAsync(
+  let result = await manipulateAsync(
+    uri,
+    [],
+    { compress: quality, format: SaveFormat.JPEG }
+  );
+
+  let response = await fetch(result.uri);
+  let blob = await response.blob();
+
+  // If already <= 150KB, return as-is
+  if (blob.size <= 150 * 1024) {
+    return result.uri;
+  }
+
+  // Compress loop
+  while (blob.size > 110 * 1024 && quality > 0.3)
+ {
+    quality -= 0.1;
+    width -= 100;
+
+    result = await manipulateAsync(
       uri,
-      [],
+      [{ resize: { width } }],
       { compress: quality, format: SaveFormat.JPEG }
     );
 
-    const response = await fetch(result.uri);
-    const blob = await response.blob();
-    finalSize = blob.size;
+    response = await fetch(result.uri);
+    blob = await response.blob();
+  }
 
-    if (finalSize > 150000) {
-      let width = 800;
-      
-      while (finalSize > 150000 && quality > 0.3) {
-        compressed = await manipulateAsync(
-          uri,
-          [{ resize: { width } }],
-          { compress: quality, format: SaveFormat.JPEG }
-        );
+  return result.uri;
+};
 
-        const res = await fetch(compressed.uri);
-        const b = await res.blob();
-        finalSize = b.size;
-
-        if (finalSize > 150000) {
-          quality -= 0.1;
-          width -= 100;
-        }
-      }
-
-      return compressed;
-    }
-
-    return result;
-  };
 
   // 📤 Save Image to Firebase Database (as base64)
-  const uploadImageToFirebase = async (imageUri) => {
+  const uploadImageToFirebase = async (imageUri) =>  {
     try {
-      setUploadingImage(true);
+          setUploadingImage(true);
 
-      // 1. Get original image size first
-      const originalResponse = await fetch(imageUri);
-      const originalBlob = await originalResponse.blob();
-      const originalSize = originalBlob.size;
-      
-      console.log(`📊 Original image size: ${(originalSize / 1024).toFixed(2)} KB`);
+    const studentId = await AsyncStorage.getItem("studentId");
 
-      let finalImageUri = imageUri;
+    const response = await fetch(imageUri);
+    const blob = await response.blob();
 
-      // 2. Check if compression is needed
-      if (originalSize > 150000) {
-        console.log('🔄 Image too large, compressing...');
-        
-        const compressedImage = await compressImage(imageUri);
-        const compressedResponse = await fetch(compressedImage.uri);
-        const compressedBlob = await compressedResponse.blob();
-        const compressedSize = compressedBlob.size;
-        
-        console.log(`📊 Compressed image size: ${(compressedSize / 1024).toFixed(2)} KB`);
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64Image = reader.result;
 
-        // 3. Final size check
-        if (compressedSize > 150000) {
-          Alert.alert(
-            "Image Too Large", 
-            `Image size: ${(compressedSize / 1024).toFixed(2)} KB\n\nPlease choose an image smaller than 150 KB, or take a new photo with lower quality.`
-          );
-          setUploadingImage(false);
-          return;
-        }
-
-        finalImageUri = compressedImage.uri;
-      } else {
-        console.log('✅ Image size OK, using original...');
-      }
-
-      // 4. Convert image to base64
-      console.log('🔄 Converting image to base64...');
-      const base64Response = await fetch(finalImageUri);
-      const blob = await base64Response.blob();
-      
-      const base64Data = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64 = reader.result;
-          resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
+      await api.put(`/api/student/profile-image/${studentId}`, {
+        image: base64Image,
       });
 
-      // 5. Save to Firebase Database
-      const studentKey = studentData.firebaseKey || await AsyncStorage.getItem('studentKey');
-      
-      if (!studentKey) {
-        throw new Error("Student key not found");
-      }
-
-      console.log(`💾 Saving image to database: students/${studentKey}/image`);
-      
-      const studentDbRef = ref(db, `students/${studentKey}`);
-      await update(studentDbRef, {
-        image: base64Data
-      });
-
-      console.log('✅ Image saved successfully!');
-
-      // 6. Update local state
       setStudentData(prev => ({
         ...prev,
-        image: base64Data
+        image: base64Image,
       }));
 
-      Alert.alert("Success", "Profile picture updated successfully!");
-      
-    } catch (error) {
-      console.error("Error uploading image:", error);
-      
-      let errorMessage = "Failed to upload image. Please try again.";
-      
-      if (error.message?.includes('quota')) {
-        errorMessage = "Database quota exceeded. Please contact support.";
-      } else if (error.message?.includes('permission')) {
-        errorMessage = "Permission denied. Please check Firebase Database rules.";
-      }
-      
-      Alert.alert("Upload Error", errorMessage);
-    } finally {
-      setUploadingImage(false);
-    }
-  };
+      Alert.alert("Success", "Profile image saved");
+    };
+
+    reader.readAsDataURL(blob);
+
+  } catch (err) {
+    console.error(err);
+    Alert.alert("Upload failed");
+  } finally {
+    setUploadingImage(false);
+  }
+};
+
+
+
+
 
   // 🗑️ Remove Image from Firebase
   const removeImage = async () => {
-    try {
-      setUploadingImage(true);
+  try {
+    setUploadingImage(true);
 
-      const studentKey = studentData.firebaseKey || await AsyncStorage.getItem('studentKey');
-      
-      if (!studentKey) {
-        throw new Error("Student key not found");
-      }
+    const studentId = await AsyncStorage.getItem("studentId");
+    await api.delete(`/api/student/profile-image/${studentId}`);
 
-      console.log(`🗑️ Removing image from database: students/${studentKey}/image`);
-      
-      const studentDbRef = ref(db, `students/${studentKey}`);
-      await update(studentDbRef, {
-        image: null
-      });
+    setStudentData(prev => ({
+      ...prev,
+      image: null
+    }));
 
-      console.log('✅ Image removed successfully!');
+    Alert.alert("Success", "Profile picture removed successfully!");
 
-      // Update local state
-      setStudentData(prev => ({
-        ...prev,
-        image: null
-      }));
-
-      Alert.alert("Success", "Profile picture removed successfully!");
-      
-    } catch (error) {
-      console.error("Error removing image:", error);
-      Alert.alert("Error", "Failed to remove image. Please try again.");
-    } finally {
-      setUploadingImage(false);
-    }
-  };
+  } catch (error) {
+    console.error("Error removing image:", error.message);
+    Alert.alert("Error", "Failed to remove image.");
+  } finally {
+    setUploadingImage(false);
+  }
+};
 
   const confirmRemoveImage = () => {
     if (Platform.OS === "web") {
@@ -338,29 +266,35 @@ const StudentProfile = ({ route }) => {
 
   // 📷 Pick Image from Gallery
   const pickImage = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'We need camera roll permissions to update your profile picture.');
-        return;
-      }
+  try {
+    const { status } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.9,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        await uploadImageToFirebase(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error("Error picking image:", error);
-      Alert.alert("Error", "Failed to pick image. Please try again.");
+    if (status !== "granted") {
+      Alert.alert(
+        "Permission Denied",
+        "We need gallery permissions to update your profile picture."
+      );
+      return;
     }
-  };
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images, // ✅ WORKING
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 1,
+    });
+
+    if (!result.canceled && result.assets?.[0]) {
+      const finalUri = await compressImage(result.assets[0].uri);
+      await uploadImageToFirebase(finalUri);
+    }
+  } catch (error) {
+    console.error("Error picking image:", error);
+    Alert.alert("Error", "Failed to pick image.");
+  }
+};
+
 
   // 📸 Take Photo with Camera
   const takePhoto = async () => {
@@ -499,7 +433,10 @@ const StudentProfile = ({ route }) => {
                 {studentData.image ? (
                   <>
                     <Image
-                      source={{ uri: studentData.image }}
+                      source={{
+                         uri: studentData.image
+                          }}
+
                       style={styles.profileImage}
                     />
                     <View style={styles.imageBorder} />

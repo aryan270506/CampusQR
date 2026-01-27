@@ -16,6 +16,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CommonActions, useNavigation } from '@react-navigation/native';
 import { disconnectSocket } from "../../src/services/socket";
 import api from "../../src/utils/axios";
+import { ScrollView } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
+
+
 
 
 
@@ -30,42 +34,328 @@ export default function AdminProfile() {
   }, []);
 
   const fetchAdminData = async () => {
-    try {
-      setLoading(true);
-      
-      // Get the stored admin identifier from AsyncStorage (if you stored it during login)
-      // If not stored during login, we'll fetch the first admin or modify login.js to store it
-      const storedAdminId = await AsyncStorage.getItem('adminId');
-      
-      const adminSnap = await get(ref(db, "Admin"));
-      
-      if (adminSnap.exists()) {
-        const admins = adminSnap.val();
-        
-        // If we have a stored admin ID, find that specific admin
-        if (storedAdminId && admins[storedAdminId]) {
-          setAdmin({
-            ...admins[storedAdminId],
-            firebaseKey: storedAdminId,
-          });
-        } else {
-          // Otherwise, get the first admin (or modify this logic as needed)
-          const firstAdminKey = Object.keys(admins)[0];
-          setAdmin({
-            ...admins[firstAdminKey],
-            firebaseKey: firstAdminKey,
-          });
-        }
-      } else {
-        Alert.alert('Error', 'No admin data found');
-      }
-    } catch (error) {
-      console.error("Error fetching admin data:", error);
-      Alert.alert('Error', 'Failed to load admin data');
-    } finally {
-      setLoading(false);
+  try {
+    setLoading(true);
+
+    const adminId = await AsyncStorage.getItem("adminId");
+    if (!adminId) {
+      throw new Error("Admin ID not found");
     }
-  };
+
+    const res = await api.get(`/api/admin/me/${adminId}`);
+
+    // ✅ ALL DATA COMES FROM MONGO
+    setAdmin(res.data);
+
+  } catch (err) {
+    console.error("❌ Admin profile error:", err);
+    Alert.alert("Error", "Failed to load admin profile");
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleUploadTeachers = async () => {
+  try {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: "application/json",
+      copyToCacheDirectory: true,
+    });
+
+    if (result.canceled) return;
+
+    const file = result.assets[0];
+
+    if (!file.name.endsWith(".json")) {
+      Alert.alert("Invalid File", "Only JSON files are allowed");
+      return;
+    }
+
+    const response = await fetch(file.uri);
+    const text = await response.text();
+
+    let jsonData;
+    try {
+      jsonData = JSON.parse(text);
+    } catch {
+      Alert.alert("Invalid JSON", "File is not valid JSON");
+      return;
+    }
+
+    const res = await api.post(
+      "/api/admin/upload-teachers",
+      jsonData,
+      { headers: { "Content-Type": "application/json" } }
+    );
+
+    Alert.alert(
+      "Upload Successful",
+      `${res.data.count} teachers uploaded successfully`
+    );
+
+  } catch (err) {
+    console.error("❌ Teacher upload error:", err);
+    Alert.alert("Error", "Failed to upload teachers");
+  }
+};
+
+
+
+const handleUploadAdmins = async () => {
+  try {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: "application/json",
+      copyToCacheDirectory: true,
+    });
+
+    if (result.canceled) return;
+
+    const file = result.assets[0];
+
+    if (!file.name.endsWith(".json")) {
+      Alert.alert("Invalid File", "Only JSON files are allowed");
+      return;
+    }
+
+    const response = await fetch(file.uri);
+    const text = await response.text();
+
+    let jsonData;
+    try {
+      jsonData = JSON.parse(text);
+    } catch {
+      Alert.alert("Invalid JSON", "File is not valid JSON");
+      return;
+    }
+
+    const res = await api.post(
+      "/api/admin/upload-admins",
+      jsonData,
+      { headers: { "Content-Type": "application/json" } }
+    );
+
+    Alert.alert(
+      "Upload Successful",
+      `${res.data.count} admins uploaded successfully`
+    );
+
+  } catch (err) {
+    console.error("❌ Admin upload error:", err);
+    Alert.alert("Error", "Failed to upload admins");
+  }
+};
+
+
+const handleUploadStudents = async () => {
+  try {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: "application/json",
+      copyToCacheDirectory: true,
+    });
+
+    if (result.canceled) {
+      return;
+    }
+
+    const file = result.assets[0];
+
+    // ✅ Enforce JSON only
+    if (!file.name.endsWith(".json")) {
+      Alert.alert("Invalid File", "Only JSON files are allowed");
+      return;
+    }
+
+    // ✅ Read file content (works on all platforms)
+    const response = await fetch(file.uri);
+    const text = await response.text();
+
+    let jsonData;
+    try {
+      jsonData = JSON.parse(text);
+    } catch (e) {
+      Alert.alert("Invalid JSON", "File is not valid JSON");
+      return;
+    }
+
+    // ✅ Upload to backend
+    const res = await api.post(
+      "/api/admin/upload-students",
+      jsonData,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    Alert.alert(
+      "Upload Successful",
+      `${res.data.count} students uploaded successfully`
+    );
+
+  } catch (err) {
+    console.error("❌ Upload error:", err);
+    Alert.alert("Error", "Failed to upload students");
+  }
+};
+
+
+const handleUploadParents = async () => {
+  console.log("🟢 handleUploadParents CALLED");
+  
+  try {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: "application/json",
+      copyToCacheDirectory: true,
+    });
+
+    console.log("📁 File picker result:", result);
+
+    if (result.canceled) {
+      console.log("⚠️ File picker canceled");
+      return;
+    }
+
+    const file = result.assets[0];
+    console.log("📄 Selected file:", file.name);
+
+    // ✅ Enforce JSON only
+    if (!file.name.endsWith(".json")) {
+      console.log("❌ Invalid file type:", file.name);
+      Alert.alert("Invalid File", "Only JSON files are allowed");
+      return;
+    }
+
+    // ✅ Read file content (works on all platforms)
+    console.log("📖 Reading file from URI:", file.uri);
+    const response = await fetch(file.uri);
+    const text = await response.text();
+    console.log("📝 File content length:", text.length);
+
+    let jsonData;
+    try {
+      jsonData = JSON.parse(text);
+      console.log("✅ JSON parsed successfully");
+      console.log("📊 Data type:", typeof jsonData);
+      console.log("📊 Is Array:", Array.isArray(jsonData));
+      console.log("📊 Array length:", jsonData?.length);
+      console.log("📊 First item:", jsonData?.[0]);
+    } catch (e) {
+      console.log("❌ JSON parse error:", e);
+      Alert.alert("Invalid JSON", "File is not valid JSON");
+      return;
+    }
+
+    // ⚠️ WARNING CONFIRMATION (since old parents get deleted)
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm(
+        "Uploading parents will DELETE all existing parents. Continue?"
+      );
+      
+      if (!confirmed) {
+        console.log("⚠️ Upload canceled by user");
+        return;
+      }
+
+      // Upload immediately for web
+      try {
+        console.log("🚀 Sending POST request to /api/admin/upload-parents");
+        console.log("📦 Payload:", jsonData);
+        
+        const res = await api.post(
+          "/api/admin/upload-parents",
+          jsonData,
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        console.log("✅ Upload response:", res.data);
+
+        window.alert(
+          `Upload Successful\n${res.data.count} parents uploaded successfully`
+        );
+      } catch (err) {
+        console.error("❌ Parent upload error:", err);
+        console.error("❌ Error response:", err?.response?.data);
+        console.error("❌ Error message:", err?.message);
+        
+        const message =
+          err?.response?.data?.message ||
+          err?.response?.data?.error ||
+          err.message ||
+          "Upload failed";
+
+        window.alert(`Upload Failed\n${message}`);
+      }
+    } else {
+      // Mobile flow with Alert
+      Alert.alert(
+        "Confirm Upload",
+        "Uploading parents will DELETE all existing parents. Continue?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Upload",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                console.log("🚀 Sending POST request to /api/admin/upload-parents");
+                
+                const res = await api.post(
+                  "/api/admin/upload-parents",
+                  jsonData,
+                  {
+                    headers: {
+                      "Content-Type": "application/json",
+                    },
+                  }
+                );
+
+                console.log("✅ Upload response:", res.data);
+
+                Alert.alert(
+                  "Upload Successful",
+                  `${res.data.count} parents uploaded successfully`
+                );
+              } catch (err) {
+                console.error("❌ Parent upload error:", err);
+                console.error("❌ Error response:", err?.response?.data);
+                
+                const message =
+                  err?.response?.data?.message ||
+                  err?.response?.data?.error ||
+                  err.message ||
+                  "Upload failed";
+
+                Alert.alert("Upload Failed", message);
+              }
+            },
+          },
+        ]
+      );
+    }
+
+  } catch (err) {
+    console.error("❌ Upload error (outer try):", err);
+    
+    const message =
+      err?.response?.data?.message ||
+      err?.response?.data?.error ||
+      err.message ||
+      "Upload failed";
+
+    if (Platform.OS === "web") {
+      window.alert(`Upload Failed\n${message}`);
+    } else {
+      Alert.alert("Upload Failed", message);
+    }
+  }
+};
+
+
   // Remove handleLogout() entirely and use only this:
 const confirmLogout = () => {
   if (Platform.OS === "web") {
@@ -210,16 +500,20 @@ const logoutAdmin = async () => {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
 
+      <ScrollView
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+    >
+
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>
-            {admin.email
-              ? admin.email.substring(0, 2).toUpperCase()
-              : admin.id
-              ? admin.id.substring(0, 2).toUpperCase()
-              : 'AD'}
-          </Text>
+  {admin.name
+    ? admin.name.substring(0, 2).toUpperCase()
+    : "AD"}
+</Text>
+
         </View>
         <Text style={styles.name}>
           {admin.email ? admin.email.split('@')[0] : 'Admin User'}
@@ -234,16 +528,59 @@ const logoutAdmin = async () => {
         <ProfileRow label="Admin ID" value={admin.id || 'N/A'} />
       </View>
 
+      {/* Upload Data Section */}
+    <View style={styles.uploadSection}>
+      <Text style={styles.sectionTitle}>Upload Data</Text>
+
+      <TouchableOpacity
+        style={styles.uploadCard}
+        onPress={handleUploadStudents}
+
+      >
+        <Text style={styles.uploadTitle}>Upload Students</Text>
+        <Text style={styles.uploadSubtitle}>CSV / Excel / JSON</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.uploadCard}
+        onPress={handleUploadTeachers}
+      >
+        <Text style={styles.uploadTitle}>Upload Teachers</Text>
+        <Text style={styles.uploadSubtitle}>CSV / Excel / JSON</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.uploadCard}
+        onPress={handleUploadAdmins}
+
+      >
+        <Text style={styles.uploadTitle}>Upload Admins</Text>
+        <Text style={styles.uploadSubtitle}>CSV / Excel / JSON</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.uploadCard}
+        onPress={handleUploadParents}
+
+      >
+        <Text style={styles.uploadTitle}>Upload Parents</Text>
+        <Text style={styles.uploadSubtitle}>CSV / Excel / JSON</Text>
+      </TouchableOpacity>
+    </View>
+
       {/* Logout Button */}
       <TouchableOpacity
   style={styles.logoutButton}
   onPress={confirmLogout}
 >
   <Text style={styles.logoutText}>Logout</Text>
+  
 </TouchableOpacity>
 
 
 
+
+</ScrollView>
 
     </SafeAreaView>
   );
@@ -371,4 +708,37 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+
+  uploadSection: {
+  marginBottom: 30,
+},
+
+sectionTitle: {
+  fontSize: 18,
+  fontWeight: "700",
+  color: "#1e293b",
+  marginBottom: 12,
+},
+
+uploadCard: {
+  backgroundColor: "#ffffff",
+  borderRadius: 14,
+  padding: 18,
+  marginBottom: 12,
+  borderWidth: 1,
+  borderColor: "#e2e8f0",
+},
+
+uploadTitle: {
+  fontSize: 16,
+  fontWeight: "600",
+  color: "#1e293b",
+},
+
+uploadSubtitle: {
+  fontSize: 13,
+  color: "#64748b",
+  marginTop: 4,
+},
+
 });

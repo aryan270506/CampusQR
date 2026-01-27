@@ -1,8 +1,17 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  Image,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  ActivityIndicator
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ref, get } from "firebase/database";
-import { db } from "../firebase"; // path may change
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { connectSocket } from '../../src/services/socket';
 import api from "../../src/utils/axios";
@@ -15,156 +24,155 @@ export default function LoginScreen({ navigation }) {
 
   const handleLogin = async () => {
     if (!loginId || !password) {
-      console.log("❌ Empty login attempt");
       alert("Please enter Login ID and Password");
       return;
     }
 
     setIsLoading(true);
 
+    // ================= ADMIN LOGIN =================
     try {
-      console.log("🔍 Login attempt started for:", loginId);
+      const res = await api.post("/api/auth/admin/login", {
+        id: loginId,
+        password
+      });
 
-      // ================= ADMIN =================
-      const adminSnap = await get(ref(db, "Admin"));
-      if (adminSnap.exists()) {
-        const admins = adminSnap.val();
-        for (let key in admins) {
-          const admin = admins[key];
-          if (
-            (admin.id === loginId || admin.email === loginId) &&
-            admin.password === password
-          ) {
-            console.log("✅ ADMIN logged in:", admin.email || admin.id);
+      if (res.data.success) {
+        const admin = res.data;
 
-            await AsyncStorage.setItem("adminId", key);
-            await AsyncStorage.setItem("userType", "admin");
+        await AsyncStorage.setItem("userType", "admin");
+        await AsyncStorage.setItem("adminId", admin.id);
 
-            // 🔌 CONNECT SOCKET HERE
-            connectSocket({
-              firebaseKey: key,
-              userId: admin.id,
-              role: "admin"
-            });
+        connectSocket({
+          userId: admin.id,
+          role: "admin"
+        });
 
-            try {
-              await api.post("/api/users/login", {
-                userId: admin.id,
-                role: "admin",
-              });
-            } catch (err) {
-              console.log("Login API failed (ignored):", err.message);
-            }
+        await api.post("/api/users/login", {
+          userId: admin.id,
+          role: "admin"
+        });
 
-            setIsLoading(false);
-            navigation.replace("AdminDashboard");
-            return;
-          }
-        }
+        setIsLoading(false);
+        navigation.replace("AdminDashboard");
+        return;
       }
+    } catch (err) {}
 
-      // ================= TEACHERS =================
-      const teacherSnap = await get(ref(db, "teachers"));
-      if (teacherSnap.exists()) {
-        const teachers = teacherSnap.val();
-        for (let key in teachers) {
-          const teacher = teachers[key];
-          if (
-            (teacher.id === loginId || teacher.email === loginId) &&
-            teacher.password === password
-          ) {
-            console.log("✅ TEACHER logged in:", teacher.email || teacher.id);
+    // ================= TEACHER LOGIN =================
+    try {
+      const res = await api.post("/api/auth/teacher/login", {
+        id: loginId,
+        password
+      });
 
-            await AsyncStorage.setItem("teacherId", key);
-            await AsyncStorage.setItem("userType", "teacher");
+      if (res.data.success) {
+        const teacher = res.data;
 
-            // 🔌 CONNECT SOCKET HERE
-            connectSocket({
-              firebaseKey: key,
-              userId: teacher.id,
-              role: "teacher"
-            });
+        await AsyncStorage.setItem("userType", "teacher");
+        await AsyncStorage.setItem("teacherId", teacher.id);
 
-            try {
-              await api.post("/api/users/login", {
-                userId: teacher.id,
-                role: "teacher",
-              });
-            } catch (err) {
-              console.log("Login API failed (ignored):", err.message);
-            }
+        connectSocket({
+          userId: teacher.id,
+          role: "teacher"
+        });
 
-            setIsLoading(false);
-            navigation.replace("TeacherDashboard", {
-              teacherId: key,
-              teacherData: {
-                ...teacher,
-                firebaseKey: key,
-              },
-            });
-            return;
-          }
-        }
+        await api.post("/api/users/login", {
+          userId: teacher.id,
+          role: "teacher"
+        });
+
+        setIsLoading(false);
+        navigation.replace("TeacherDashboard", {
+          teacherData: teacher
+        });
+        return;
       }
+    } catch (err) {}
 
-      // ================= STUDENTS =================
-      const studentSnap = await get(ref(db, "students"));
-      if (studentSnap.exists()) {
-        const students = studentSnap.val();
-        for (let key in students) {
-          const student = students[key];
-          if (
-            (student.id === loginId ||
-              student.email === loginId ||
-              student.prn === loginId) &&
-            student.password === password
-          ) {
-            console.log("✅ STUDENT logged in:", student.name || student.prn);
+     // ================= PARENT LOGIN =================
+  try {
+    const res = await api.post("/api/auth/parent-login", {
+  id: loginId,
+  password
+});
 
-            await AsyncStorage.setItem("studentKey", key);
-            await AsyncStorage.setItem("studentId", student.id);
-            await AsyncStorage.setItem("userType", "student");
-            await AsyncStorage.setItem("studentYear", String(student.year));
-            await AsyncStorage.setItem("studentDivision", String(student.division));
+if (res.data.success) {
+  const parent = res.data.parent;
 
-            // 🔌 CONNECT SOCKET HERE
-            connectSocket({
-              firebaseKey: key,
-              userId: student.id,
-              role: "student"
-            });
+  await AsyncStorage.setItem("userType", "parent");
+  await AsyncStorage.setItem("parentId", parent.id);
 
-            try {
-              await api.post("/api/users/login", {
-                userId: student.id,
-                role: "student",
-              });
-            } catch (err) {
-              console.log("Login API failed (ignored):", err.message);
-            }
+  connectSocket({
+    userId: parent.id,
+    role: "parent"
+  });
 
-            setIsLoading(false);
-            navigation.replace("StudentDashboard", {
-              studentData: {
-                ...student,
-                firebaseKey: key,
-              },
-            });
-            return;
-          }
-        }
-      }
+  await api.post("/api/users/login", {
+    userId: parent.id,
+    role: "parent"
+  });
 
-      // ❌ NO MATCH FOUND
-      console.log("❌ Login failed: Invalid credentials for", loginId);
+  navigation.replace("ParentAttendanceScreen", {
+    parentData: parent
+  });
+  return;
+}
+
+
+    if (res.data.success) {
+      const parent = res.data;
+
+      await AsyncStorage.setItem("userType", "parent");
+      await AsyncStorage.setItem("parentId", parent.id);
+
+      connectSocket({ userId: parent.id, role: "parent" });
+      await api.post("/api/users/login", { userId: parent.id, role: "parent" });
+
       setIsLoading(false);
-      alert("Invalid credentials ❌");
-
-    } catch (error) {
-      console.error("🔥 Login Error:", error);
-      setIsLoading(false);
-      alert("Something went wrong. Please try again.");
+      navigation.replace("ParentAttendanceScreen", {
+        parentData: parent
+      });
+      return;
     }
+  } catch (err) {}
+
+    // ================= STUDENT LOGIN =================
+    try {
+      const res = await api.post("/api/auth/student/login", {
+        id: loginId,
+        password
+      });
+
+      if (res.data.success) {
+        const student = res.data;
+
+        await AsyncStorage.setItem("userType", "student");
+        await AsyncStorage.setItem("studentId", student.id);
+        await AsyncStorage.setItem("studentYear", String(student.year));
+        await AsyncStorage.setItem("studentDivision", String(student.division));
+
+        connectSocket({
+          userId: student.id,
+          role: "student"
+        });
+
+        await api.post("/api/users/login", {
+          userId: student.id,
+          role: "student"
+        });
+
+        setIsLoading(false);
+        navigation.replace("StudentDashboard", {
+          studentData: student
+        });
+        return;
+      }
+    } catch (err) {}
+
+    // ❌ INVALID CREDENTIALS
+    setIsLoading(false);
+    alert("Invalid credentials ❌");
   };
 
   return (
@@ -172,15 +180,10 @@ export default function LoginScreen({ navigation }) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={{ flex: 1 }}
     >
-      <ScrollView
-        contentContainerStyle={{ flexGrow: 1 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        <LinearGradient
-          colors={['#1e3c72', '#2a5298', '#7e22ce']}
-          style={{ flex: 1 }}
-        >
-          {/* College Logo Section */}
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
+        <LinearGradient colors={['#1e3c72', '#2a5298', '#7e22ce']} style={{ flex: 1 }}>
+          
+          {/* Logo Section */}
           <View style={styles.logoContainer}>
             <View style={styles.shadowWrapper}>
               <View style={styles.logoCircle}>
@@ -191,7 +194,7 @@ export default function LoginScreen({ navigation }) {
                 />
               </View>
             </View>
-            <Text style={styles.collegeName}>Sanjay Ghodawat University 🎓 </Text>
+            <Text style={styles.collegeName}>Sanjay Ghodawat University 🎓</Text>
             <Text style={styles.subtitle}>Attendance Management System</Text>
             <Text style={styles.tagline}>"Scan to be Counted...."</Text>
           </View>
@@ -201,7 +204,7 @@ export default function LoginScreen({ navigation }) {
             <Text style={styles.welcomeText}>Welcome Back!</Text>
             <Text style={styles.loginText}>Login to your account</Text>
 
-            {/* Login ID Input */}
+            {/* Login ID */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Login ID</Text>
               <View style={styles.inputWrapper}>
@@ -217,7 +220,7 @@ export default function LoginScreen({ navigation }) {
               </View>
             </View>
 
-            {/* Password Input */}
+            {/* Password */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Password</Text>
               <View style={styles.inputWrapper}>
@@ -231,7 +234,7 @@ export default function LoginScreen({ navigation }) {
                   autoCapitalize="none"
                   editable={!isLoading}
                 />
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setShowPassword(!showPassword)}
                   style={styles.eyeIcon}
                   disabled={isLoading}
@@ -242,33 +245,28 @@ export default function LoginScreen({ navigation }) {
             </View>
 
             {/* Login Button */}
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.loginButton}
               onPress={handleLogin}
-              activeOpacity={0.8}
               disabled={isLoading}
             >
               <LinearGradient
                 colors={isLoading ? ['#9333ea', '#c084fc'] : ['#7e22ce', '#a855f7']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
                 style={styles.loginButtonGradient}
               >
                 {isLoading ? (
-                  <ActivityIndicator color="#ffffff" size="small" />
+                  <ActivityIndicator color="#fff" />
                 ) : (
                   <Text style={styles.loginButtonText}>LOGIN</Text>
                 )}
               </LinearGradient>
             </TouchableOpacity>
 
-            {/* Developer Badge */}
+            {/* Developer */}
             <View style={styles.developerBadge}>
               <Text style={styles.developerText}>Developed by</Text>
               <LinearGradient
                 colors={['#7e22ce', '#a855f7', '#ec4899']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
                 style={styles.badgeGradient}
               >
                 <Text style={styles.badgeText}>⚡ Catalyst Coders</Text>
@@ -280,6 +278,7 @@ export default function LoginScreen({ navigation }) {
     </KeyboardAvoidingView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {

@@ -1,22 +1,34 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const http = require("http");
+const cors = require("cors");
+
 const initSocket = require("./Socket");
 
-const userRoutes = require("./Routes/userRoutes");
-const attendanceRoutes = require("./Routes/attendanceRoutes"); // ✅ ADD THIS
-const cors = require("cors");
+// ===============================
+// 🔹 ROUTES
+// ===============================
+const userRoutes = require("./Routes/userRoutes");                 // socket presence
+const authRoutes = require("./Routes/authRoutes");                 // student / teacher / admin login
+const studentRoutes = require("./Routes/studentRoutes");           // student APIs
+const teacherRoutes = require("./Routes/teacherRoutes");           // teacher APIs
+const adminRoutes = require("./Routes/adminRoutes");               // admin APIs
+const attendanceRoutes = require("./Routes/attendanceRoutes");     // theory attendance
+const labAttendanceRoutes = require("./Routes/labAttendanceRoutes"); // lab attendance
+const parentRoutes = require("./Routes/parentRoutes");              // parent APIs
 
 const app = express();
 
 /* ===============================
-   🔹 CORS (🔥 REQUIRED FOR WEB)
+   🔹 CORS (WEB + MOBILE)
 ================================ */
-app.use(cors({
-  origin: "*", // ✅ allow all for development
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-}));
+app.use(
+  cors({
+    origin: "*", // ⚠️ restrict in production
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 /* ===============================
    🔹 GLOBAL REQUEST LOGGER
@@ -34,8 +46,15 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware
-app.use(express.json());
+/* ===============================
+   🔹 BODY PARSER
+================================ */
+app.use(express.json({ limit: "5mb" }));
+app.use(express.urlencoded({ limit: "5mb", extended: true }));
+
+app.use("/uploads", express.static("uploads"));
+
+
 
 /* ===============================
    🔹 MONGODB CONNECTION
@@ -44,14 +63,11 @@ const MONGO_URI = "mongodb://localhost:27017/Attendence-System";
 
 mongoose
   .connect(MONGO_URI)
-  .then(() => {
-    console.log("✅ MongoDB connected successfully");
-  })
-  .catch((err) => {
-    console.error("❌ MongoDB connection error:", err);
-  });
+  .then(() => console.log("✅ MongoDB connected successfully"))
+  .catch((err) =>
+    console.error("❌ MongoDB connection error:", err.message)
+  );
 
-// MongoDB event logs
 mongoose.connection.on("connected", () => {
   console.log("🟢 MongoDB connection established");
 });
@@ -61,22 +77,44 @@ mongoose.connection.on("disconnected", () => {
 });
 
 mongoose.connection.on("error", (err) => {
-  console.error("❌ MongoDB runtime error:", err);
+  console.error("❌ MongoDB runtime error:", err.message);
 });
 
 /* ===============================
-   🔹 BASIC ROUTE
+   🔹 ROOT HEALTH CHECK
 ================================ */
 app.get("/", (req, res) => {
-  console.log("🏠 Root route accessed");
-  res.send("Attendance Backend Running");
+  res.send("🚀 Attendance Backend Running");
 });
 
 /* ===============================
    🔹 API ROUTES
 ================================ */
-app.use("/api/users", userRoutes);           // user login/logout
-app.use("/api/attendance", attendanceRoutes); // ✅ attendance system
+
+// 🔐 AUTH (MongoDB-based login for all roles)
+app.use("/api/auth", authRoutes);
+
+// 🟢 USER PRESENCE / SOCKET TRACKING
+app.use("/api/users", userRoutes);
+
+// 🎓 STUDENT APIs
+app.use("/api/student", studentRoutes);
+
+// 👨‍🏫 TEACHER APIs
+app.use("/api/teacher", teacherRoutes);
+
+// 🧑‍💼 ADMIN APIs
+app.use("/api/admin", adminRoutes);
+
+// 📘 THEORY ATTENDANCE
+app.use("/api/attendance", attendanceRoutes);
+
+// 🧪 LAB ATTENDANCE
+app.use("/api/lab-attendance", labAttendanceRoutes);
+
+// 👨‍👩‍👧 PARENT APIs
+app.use("/api/parent", parentRoutes);
+
 
 /* ===============================
    🔹 HTTP + SOCKET SERVER
@@ -91,5 +129,5 @@ initSocket(server);
 ================================ */
 const PORT = 3000;
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });

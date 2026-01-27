@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,97 +9,89 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
-} from 'react-native';
-import AttendanceQRScreen from './Qr-Generator.js';
-import { ref, get } from "firebase/database";
-import { db } from "../firebase"; // Adjust path as needed
-import AsyncStorage from '@react-native-async-storage/async-storage';
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import api from "../../src/utils/axios";
 
 export default function TeacherRecord({ navigation }) {
-
   const [selectedClass, setSelectedClass] = useState(null);
   const [selectedSection, setSelectedSection] = useState(null);
   const [classes, setClasses] = useState([]);
   const [sections, setSections] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch teacher's assigned years and divisions when component mounts
   useEffect(() => {
     fetchTeacherData();
   }, []);
 
-  // Fetch teacher's assigned years and divisions from Firebase
+  // ===============================
+  // FETCH TEACHER DATA FROM MONGODB
+  // ===============================
   const fetchTeacherData = async () => {
     try {
       setLoading(true);
-      
-      // Get teacher ID from AsyncStorage
-      const teacherId = await AsyncStorage.getItem('teacherId');
-      
+
+      const teacherId = await AsyncStorage.getItem("teacherId");
+
       if (!teacherId) {
-        Alert.alert('Error', 'Teacher ID not found. Please login again.');
-        navigation.replace('LoginScreen');
+        Alert.alert("Error", "Teacher ID not found. Please login again.");
+        navigation.replace("LoginScreen");
         return;
       }
 
-      // Fetch teacher data from Firebase
-      const teacherRef = ref(db, `teachers/${teacherId}`);
-      const snapshot = await get(teacherRef);
+      console.log("👩‍🏫 Fetching teacher profile for:", teacherId);
 
-      if (snapshot.exists()) {
-        const teacherData = snapshot.val();
-        
-        // Extract years and convert to display format
-        const teacherYears = teacherData.years || [];
-        const yearLabels = teacherYears.map(year => {
-          switch(year) {
-            case 1: return '1st Year';
-            case 2: return '2nd Year';
-            case 3: return '3rd Year';
-            case 4: return '4th Year';
-            default: return `${year}th Year`;
-          }
-        });
-        setClasses(yearLabels);
+      const res = await api.get(`/api/teacher/me/${teacherId}`);
+      const teacher = res.data;
 
-        // Extract divisions and convert to display format
-        const teacherDivisions = teacherData.divisions || [];
-        const divisionLabels = teacherDivisions.map(div => `Div ${div}`);
-        setSections(divisionLabels);
+      // Years → UI labels
+      const yearLabels = (teacher.years || []).map((year) =>
+        year === 1
+          ? "1st Year"
+          : year === 2
+          ? "2nd Year"
+          : year === 3
+          ? "3rd Year"
+          : "4th Year"
+      );
 
-        console.log('✅ Loaded teacher data:', {
-          years: yearLabels,
-          divisions: divisionLabels
-        });
+      // Divisions → UI labels
+      const divisionLabels = (teacher.divisions || []).map(
+        (div) => `Div ${div}`
+      );
 
-      } else {
-        Alert.alert('Error', 'Teacher data not found');
-      }
+      setClasses(yearLabels);
+      setSections(divisionLabels);
 
+      console.log("✅ Loaded from MongoDB:", {
+        years: yearLabels,
+        divisions: divisionLabels,
+      });
     } catch (error) {
-      console.error('❌ Error fetching teacher data:', error);
-      Alert.alert('Error', 'Failed to load teacher data. Please try again.');
+      console.error("❌ Error fetching teacher data:", error);
+      Alert.alert("Error", "Failed to load teacher data.");
     } finally {
       setLoading(false);
     }
   };
 
+  // ===============================
+  // SUBMIT
+  // ===============================
   const handleSubmit = () => {
-  if (selectedClass && selectedSection) {
-    // Navigate to the QR screen with params
+    if (!selectedClass || !selectedSection) {
+      Alert.alert(
+        "Incomplete Selection",
+        "Please select both Year and Division"
+      );
+      return;
+    }
+
     navigation.navigate("StudentListScreen", {
       className: selectedClass,
       sectionName: selectedSection,
     });
-  } else {
-    Alert.alert(
-      "Incomplete Selection",
-      "Please select both class and section",
-      [{ text: "OK" }]
-    );
-  }
-};
-
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -118,7 +110,7 @@ export default function TeacherRecord({ navigation }) {
           <Text style={styles.title}>Select Year & Division</Text>
           <Text style={styles.subtitle}>Choose your class and section</Text>
 
-          {/* Class Selection */}
+          {/* YEAR */}
           {classes.length > 0 ? (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Select Year</Text>
@@ -146,11 +138,13 @@ export default function TeacherRecord({ navigation }) {
             </View>
           ) : (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No years assigned to you</Text>
+              <Text style={styles.emptyStateText}>
+                No years assigned to you
+              </Text>
             </View>
           )}
 
-          {/* Section Selection */}
+          {/* DIVISION */}
           {sections.length > 0 ? (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Select Division</Text>
@@ -167,7 +161,8 @@ export default function TeacherRecord({ navigation }) {
                     <Text
                       style={[
                         styles.buttonText,
-                        selectedSection === section && styles.selectedButtonText,
+                        selectedSection === section &&
+                          styles.selectedButtonText,
                       ]}
                     >
                       {section.split(" ")[1]}
@@ -178,37 +173,38 @@ export default function TeacherRecord({ navigation }) {
             </View>
           ) : (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No divisions assigned to you</Text>
+              <Text style={styles.emptyStateText}>
+                No divisions assigned to you
+              </Text>
             </View>
           )}
 
+          {/* SELECTION */}
+          {(selectedClass || selectedSection) && (
+            <View style={styles.selectionInfo}>
+              <Text style={styles.selectionLabel}>Your Selection:</Text>
+              <Text style={styles.selectionText}>
+                {selectedClass || "—"} - {selectedSection || "—"}
+              </Text>
+            </View>
+          )}
 
-        {/* Selected Info */}
-        {(selectedClass || selectedSection) && (
-          <View style={styles.selectionInfo}>
-            <Text style={styles.selectionLabel}>Your Selection:</Text>
-            <Text style={styles.selectionText}>
-              {selectedClass || 'No class selected'} - {selectedSection || 'No section selected'}
-            </Text>
-          </View>
-        )}
+          {/* SUBMIT */}
+          <TouchableOpacity
+            style={styles.submitButton}
+            onPress={handleSubmit}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.submitButtonText}>Confirm Selection</Text>
+          </TouchableOpacity>
 
-        {/* Submit Button */}
-        <TouchableOpacity
-          style={styles.submitButton}
-          onPress={handleSubmit}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.submitButtonText}>Confirm Selection</Text>
-        </TouchableOpacity>
-
-        {/* Extra bottom space so the button never hides */}
-        <View style={{ height: 40 }} />
-      </ScrollView>
+          <View style={{ height: 40 }} />
+        </ScrollView>
       )}
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {

@@ -15,14 +15,13 @@ import {
 } from 'react-native';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-import { ref, get } from "firebase/database";
-import { db } from "../firebase";
 import api from "../../src/utils/axios";
 
 export default function StudentRecordTeacher({ route, navigation }) {
   const { studentId, studentName, studentData } = route.params;
 
   const [subjectAttendance, setSubjectAttendance] = useState([]);
+  const [labAttendance, setLabAttendance] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [freshStudentData, setFreshStudentData] = useState(studentData);
@@ -30,61 +29,63 @@ export default function StudentRecordTeacher({ route, navigation }) {
 
   useEffect(() => {
     fetchFreshStudentData();
-    fetchStudentAttendance();
   }, []);
+
+  useEffect(() => {
+    if (freshStudentData) {
+      fetchStudentAttendance();
+    }
+  }, [freshStudentData]);
 
   const fetchFreshStudentData = async () => {
     try {
-      console.log('🔄 Fetching fresh student data from Firebase...');
+      console.log('🔄 Fetching fresh student data from MongoDB...');
       
-      // Find the student in Firebase by their ID
-      const studentsRef = ref(db, 'students');
-      const snapshot = await get(studentsRef);
+      // Fetch student data from MongoDB via API
+      const response = await api.get(`/api/student/${studentData.id}`);
       
-      if (snapshot.exists()) {
-        const allStudents = snapshot.val();
-        
-        // Find the student by their ID
-        let foundStudent = null;
-        let foundKey = null;
-        
-        Object.entries(allStudents).forEach(([key, student]) => {
-          if (student.id === studentData.id || student.prn === studentData.prn) {
-            foundStudent = { ...student, firebaseKey: key };
-            foundKey = key;
-          }
-        });
-        
-        if (foundStudent) {
-          console.log('✅ Fresh student data found');
-          console.log('🖼️ Image exists in fresh data:', !!foundStudent.image);
-          if (foundStudent.image) {
-            console.log('🖼️ Image data preview:', foundStudent.image.substring(0, 50));
-          }
-          setFreshStudentData(foundStudent);
-        } else {
-          console.log('⚠️ Student not found in Firebase, using route params data');
-        }
+      if (response.data) {
+        console.log('✅ Fresh student data found from MongoDB');
+        console.log('🔍 Student roll_no:', response.data.roll_no);
+        setFreshStudentData(response.data);
+      } else {
+        console.log('⚠️ Student not found in MongoDB, using route params data');
+        setFreshStudentData(studentData);
       }
     } catch (error) {
       console.error('❌ Error fetching fresh student data:', error);
-      // Continue with the data from route params if fetch fails
+      console.log('Using route params data as fallback');
+      setFreshStudentData(studentData);
     }
+  };
+
+  // 🔥 HELPER FUNCTION: Extract batch from roll_no
+  const extractBatchFromRollNo = (rollNo) => {
+    if (!rollNo) {
+      console.log('⚠️ No roll_no provided');
+      return null;
+    }
+    
+    console.log('🔍 Extracting batch from roll_no:', rollNo);
+    
+    // Roll no format: "TY-C1-07" or "SY-B2-15"
+    const match = rollNo.match(/[A-Z]+-([A-Z]\d+)-\d+/);
+    if (match && match[1]) {
+      console.log('✅ Extracted batch:', match[1]);
+      return match[1]; // Returns "C1", "B2", etc.
+    }
+    
+    console.log('❌ Could not extract batch from roll_no format');
+    return null;
   };
 
   const fetchStudentAttendance = async () => {
     try {
       console.log('📊 Fetching attendance for student:', studentId);
-      console.log('📚 Student data:', studentData);
-      console.log('🖼️ Student image data type:', typeof studentData.image);
-      console.log('🖼️ Student image exists:', !!studentData.image);
-      if (studentData.image) {
-        console.log('🖼️ Image starts with data:', studentData.image.substring(0, 30));
-      }
+      console.log('📚 Using student data:', freshStudentData);
 
-      // Extract subjects from student data
-      const subjectsObj = studentData.subjects || {};
-      const subjectsList = Object.values(subjectsObj);
+      // Extract subjects from student data (array format from MongoDB)
+      const subjectsList = freshStudentData.subjects || [];
 
       console.log('📖 Student subjects:', subjectsList);
 
@@ -97,9 +98,9 @@ export default function StudentRecordTeacher({ route, navigation }) {
 
       // Call backend API to get attendance summary
       const response = await api.post('/api/attendance/student-summary', {
-        studentId: studentData.id,
-        year: Number(studentData.year),
-        division: String(studentData.division),
+        studentId: freshStudentData.id,
+        year: Number(freshStudentData.year),
+        division: String(freshStudentData.division),
         subjects: subjectsList
       });
 
@@ -115,6 +116,74 @@ export default function StudentRecordTeacher({ route, navigation }) {
 
       setSubjectAttendance(formattedData);
 
+      // 🔥 FIX: Extract student's batch from roll_no
+      const studentBatch = extractBatchFromRollNo(freshStudentData.roll_no);
+      
+      console.log('🎯 Final extracted batch:', studentBatch);
+
+      // Fetch lab attendance (array format from MongoDB)
+      const labsList = freshStudentData.lab || [];
+      
+      console.log('🧪 Raw lab array:', labsList);
+
+      if (!studentBatch) {
+        console.log('❌ Cannot fetch lab attendance - batch extraction failed');
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
+      // Convert lab array to format needed for API
+      const labsWithBatch = labsList
+        .filter(Boolean) // Remove empty values
+        .map(labName => ({
+          name: labName,
+          batch: studentBatch, // 🔥 CRITICAL FIX: Use extracted batch
+        }));
+
+      console.log('🧪 Labs list with correct batch:', labsWithBatch);
+      console.log('🧪 Number of labs:', labsWithBatch.length);
+
+      if (labsWithBatch.length > 0) {
+        try {
+          console.log('📤 Sending lab summary request:', {
+            studentId: freshStudentData.id || freshStudentData.prn,
+            year: Number(freshStudentData.year),
+            division: String(freshStudentData.division),
+            labs: labsWithBatch,
+          });
+
+          const labResponse = await api.post(
+            "/api/lab-attendance/student-summary",
+            {
+              studentId: freshStudentData.id || freshStudentData.prn,
+              year: Number(freshStudentData.year),
+              division: String(freshStudentData.division),
+              labs: labsWithBatch,
+            }
+          );
+
+          console.log("✅ Lab summary response:", labResponse.data);
+
+          const formattedLabData = labResponse.data.labs.map(
+            (item, index) => ({
+              id: String(index + 1),
+              lab: item.subject,
+              attended: item.present,
+              total: item.total,
+            })
+          );
+
+          console.log('📋 Formatted lab data:', formattedLabData);
+          setLabAttendance(formattedLabData);
+        } catch (labError) {
+          console.error('❌ Error fetching lab attendance:', labError);
+          console.log('Lab error details:', labError.response?.data);
+        }
+      } else {
+        console.log('⚠️ No labs found for this student');
+      }
+
     } catch (error) {
       console.error('❌ Error fetching student attendance:', error);
       console.log('Error details:', error.response?.data || error.message);
@@ -127,7 +196,6 @@ export default function StudentRecordTeacher({ route, navigation }) {
   const onRefresh = () => {
     setRefreshing(true);
     fetchFreshStudentData();
-    fetchStudentAttendance();
   };
 
   // Calculate totals
@@ -183,13 +251,38 @@ export default function StudentRecordTeacher({ route, navigation }) {
     </View>
   );
 
+  const renderLabItem = ({ item }) => {
+    const percentage = item.total > 0 
+      ? Math.round((item.attended / item.total) * 100) 
+      : 0;
+
+    return (
+      <View style={styles.row}>
+        <Text style={[styles.cell, styles.subject]}>{item.lab}</Text>
+        <Text style={styles.cell}>{item.attended}</Text>
+        <Text style={styles.cell}>{item.total}</Text>
+        <Text
+          style={[
+            styles.cell,
+            { 
+              color: percentage < 75 ? '#dc2626' : '#16a34a', 
+              fontWeight: '700' 
+            },
+          ]}
+        >
+          {percentage}%
+        </Text>
+      </View>
+    );
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#4f46e5" />
-          <Text style={styles.loadingText}>Loading attendance data...</Text>
+          <Text style={styles.loadingText}>Loading student records...</Text>
         </View>
       </SafeAreaView>
     );
@@ -199,104 +292,121 @@ export default function StudentRecordTeacher({ route, navigation }) {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
 
-      {/* Back Button */}
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.backButton}
         onPress={() => navigation.goBack()}
       >
         <Text style={styles.backButtonText}>← Back</Text>
       </TouchableOpacity>
 
-      {/* Header with Profile Image */}
-      <View style={styles.header}>
-        <View style={styles.profileSection}>
-          {freshStudentData.image ? (
-            <TouchableOpacity
-              onPress={() => setImagePreviewVisible(true)}
-              activeOpacity={0.8}
-            >
-              <Image
-                source={{ uri: freshStudentData.image }}
-                style={styles.profileImage}
-                resizeMode="cover"
-                onError={(error) => {
-                  console.log('❌ Image load error:', error.nativeEvent?.error);
-                  console.log('❌ Failed image URI:', freshStudentData.image?.substring(0, 50));
-                }}
-                onLoad={() => {
-                  console.log('✅ Image loaded successfully!');
-                }}
-              />
-              <View style={styles.imageOverlay}>
-                <Text style={styles.imageOverlayText}>👁️</Text>
+      <FlatList
+        ListHeaderComponent={
+          <>
+            <View style={styles.header}>
+              <View style={styles.profileSection}>
+                <TouchableOpacity
+                  onPress={() => freshStudentData.image && setImagePreviewVisible(true)}
+                  disabled={!freshStudentData.image}
+                >
+                  {freshStudentData.image ? (
+                    <View>
+                      <Image
+                        source={{ uri: freshStudentData.image }}
+                        style={styles.profileImage}
+                      />
+                      <View style={styles.imageOverlay}>
+                        <Text style={styles.imageOverlayText}>🔍</Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={styles.profileImagePlaceholder}>
+                      <Text style={styles.profileImagePlaceholderText}>
+                        {studentName.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.studentInfo}>
+                  <Text style={styles.studentName}>{studentName}</Text>
+                  <Text style={styles.subtitle}>
+                    {freshStudentData.year}
+                    {freshStudentData.year === '1' ? 'st' : 
+                     freshStudentData.year === '2' ? 'nd' : 
+                     freshStudentData.year === '3' ? 'rd' : 'th'} Year • Division {freshStudentData.division}
+                  </Text>
+                  <Text style={styles.prnText}>PRN: {freshStudentData.prn}</Text>
+                  {freshStudentData.roll_no && (
+                    <Text style={styles.rollText}>Roll No: {freshStudentData.roll_no}</Text>
+                  )}
+                </View>
               </View>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.profileImagePlaceholder}>
-              <Text style={styles.profileImagePlaceholderText}>
-                {studentName.charAt(0).toUpperCase()}
+            </View>
+
+            <View style={styles.overallCard}>
+              <Text style={[styles.overallPercentage, { color: getOverallColor() }]}>
+                {overallPercentage}%
+              </Text>
+              <Text style={styles.overallText}>Overall Attendance</Text>
+              <Text style={[styles.statusText, { color: getOverallColor() }]}>
+                {getStatusText()}
               </Text>
             </View>
-          )}
-          
-          <View style={styles.studentInfo}>
-            <Text style={styles.studentName}>{studentName}</Text>
-            <Text style={styles.subtitle}>
-              Year {freshStudentData.year} • Division {freshStudentData.division}
-            </Text>
-            <Text style={styles.prnText}>PRN: {freshStudentData.prn}</Text>
-          </View>
-        </View>
-      </View>
 
-      {/* Overall Attendance Card */}
-      <View style={styles.overallCard}>
-        <Text style={[styles.overallPercentage, { color: getOverallColor() }]}>
-          {overallPercentage}%
-        </Text>
+            <Text style={styles.sectionTitle}>📚 Subject-wise Attendance</Text>
 
-        <Text style={styles.overallText}>
-          Attended {totalAttended} out of {totalLectures} lectures
-        </Text>
-
-        <Text style={[styles.statusText, { color: getOverallColor() }]}>
-          {getStatusText()}
-        </Text>
-      </View>
-
-      {/* Subject Table Header */}
-      <View style={[styles.row, styles.tableHeader]}>
-        <Text style={[styles.cell, styles.subject, styles.headerText]}>
-          Subject
-        </Text>
-        <Text style={[styles.cell, styles.headerText]}>Attended</Text>
-        <Text style={[styles.cell, styles.headerText]}>Total</Text>
-        <Text style={[styles.cell, styles.headerText]}>%</Text>
-      </View>
-
-      {/* Subject Table */}
-      <FlatList
+            {/* Table Header */}
+            <View style={[styles.row, styles.tableHeader]}>
+              <Text style={[styles.cell, styles.subject, styles.headerText]}>Subject</Text>
+              <Text style={[styles.cell, styles.headerText]}>Present</Text>
+              <Text style={[styles.cell, styles.headerText]}>Total</Text>
+              <Text style={[styles.cell, styles.headerText]}>%</Text>
+            </View>
+          </>
+        }
         data={subjectAttendance}
-        keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        contentContainerStyle={{ paddingBottom: 20 }}
-        showsVerticalScrollIndicator={false}
+        keyExtractor={(item) => item.id}
         ListEmptyComponent={renderEmptyComponent}
+        ListFooterComponent={
+          <>
+            {labAttendance.length > 0 && (
+              <>
+                <Text style={styles.sectionTitle}>🧪 Lab Attendance</Text>
+
+                {/* Lab Table Header */}
+                <View style={[styles.row, styles.tableHeader]}>
+                  <Text style={[styles.cell, styles.subject, styles.headerText]}>Lab</Text>
+                  <Text style={[styles.cell, styles.headerText]}>Present</Text>
+                  <Text style={[styles.cell, styles.headerText]}>Total</Text>
+                  <Text style={[styles.cell, styles.headerText]}>%</Text>
+                </View>
+
+                <FlatList
+                  data={labAttendance}
+                  renderItem={renderLabItem}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                />
+              </>
+            )}
+
+            <View style={styles.refreshHint}>
+              <Text style={styles.refreshHintText}>
+                Pull down to refresh data
+              </Text>
+            </View>
+          </>
+        }
         refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
+          <RefreshControl
+            refreshing={refreshing}
             onRefresh={onRefresh}
             colors={['#4f46e5']}
+            tintColor="#4f46e5"
           />
         }
       />
-
-      {/* Pull to refresh hint */}
-      <View style={styles.refreshHint}>
-        <Text style={styles.refreshHintText}>
-          Pull down to refresh attendance data
-        </Text>
-      </View>
 
       {/* Image Preview Modal */}
       <Modal
@@ -504,6 +614,12 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     marginTop: 2,
   },
+  rollText: {
+    fontSize: 13,
+    color: '#94a3b8',
+    marginTop: 2,
+    fontWeight: '600',
+  },
   overallCard: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
@@ -573,6 +689,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: 'center',
     paddingHorizontal: 20,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginTop: 24,
+    marginBottom: 12,
+    paddingHorizontal: 4,
   },
   refreshHint: {
     paddingVertical: 12,

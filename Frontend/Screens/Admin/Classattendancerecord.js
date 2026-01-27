@@ -18,7 +18,15 @@ import * as Sharing from 'expo-sharing';
 import api from '../../src/utils/axios';
 
 const ClassAttendanceRecord = ({ route, navigation }) => {
-  const { year, division, className, sectionName } = route.params;
+  const { 
+    year, 
+    division, 
+    className, 
+    sectionName,
+    startDate,
+    endDate,
+    attendanceType = 'theory' // 'theory' or 'lab'
+  } = route.params;
   
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -26,208 +34,271 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
 
   useEffect(() => {
     fetchAttendanceData();
-  }, [year, division]);
+  }, [year, division, attendanceType, startDate, endDate]);
 
-  const fetchAttendanceData = async () => {
-    setLoading(true);
-    
-    try {
-      console.log('📊 Fetching attendance for class:', { year, division });
-
-      // Fetch all students from Firebase
-      const studentsRef = ref(db, 'students');
-      const snapshot = await get(studentsRef);
-
-      if (!snapshot.exists()) {
-        console.log('❌ No students found in Firebase');
-        setStudents([]);
-        setSubjects([]);
-        setLoading(false);
-        return;
-      }
-
-      const allStudentsData = snapshot.val();
-      
-      // Convert year to number for comparison
-      const yearNumber = parseInt(year);
-      
-      // Filter students by year and division
-      const filteredStudents = Object.entries(allStudentsData)
-        .filter(([key, student]) => {
-          // Handle both string and number year values from Firebase
-          const studentYear = typeof student.year === 'string' 
-            ? parseInt(student.year) 
-            : student.year;
-          
-          console.log(`🔍 Checking student ${student.name}: year=${studentYear} (${typeof studentYear}), division=${student.division}`);
-          
-          return studentYear === yearNumber && 
-                 student.division?.toUpperCase() === division.toUpperCase();
-        });
-
-      if (filteredStudents.length === 0) {
-        console.log('⚠️ No students found for this class');
-        setStudents([]);
-        setSubjects([]);
-        setLoading(false);
-        return;
-      }
-
-      console.log(`✅ Found ${filteredStudents.length} students`);
-
-      // Collect all unique subjects from all students
-      const allSubjects = new Set();
-      filteredStudents.forEach(([key, student]) => {
-        if (student.subjects) {
-          Object.values(student.subjects).forEach(subject => {
-            allSubjects.add(subject);
-          });
-        }
-      });
-
-      const subjectsList = Array.from(allSubjects).sort();
-      setSubjects(subjectsList);
-
-      console.log('📚 Subjects found:', subjectsList);
-
-      // Fetch attendance data for each student
-      const studentPromises = filteredStudents.map(async ([key, student]) => {
-        try {
-          // Get student's subjects
-          const studentSubjects = student.subjects 
-            ? Object.values(student.subjects) 
-            : [];
-
-          // Fetch attendance from MongoDB
-          const response = await api.post('/api/attendance/student-summary', {
-            studentId: student.id,
-            year: yearNumber,
-            division: division,
-            subjects: studentSubjects
-          });
-
-          const attendanceData = response.data.subjects;
-
-          // Process attendance data
-          const subjectAttendance = {};
-          let totalPresent = 0;
-          let totalClasses = 0;
-
-          // Create attendance map for all subjects in the class
-          subjectsList.forEach(subject => {
-            // Check if this student has this subject
-            if (studentSubjects.includes(subject)) {
-              const subjectData = attendanceData.find(item => item.subject === subject);
-              
-              if (subjectData) {
-                const present = subjectData.present;
-                const total = subjectData.total;
-                const percentage = total > 0 ? ((present / total) * 100).toFixed(2) : 0;
-
-                subjectAttendance[subject] = {
-                  present,
-                  total,
-                  percentage,
-                };
-
-                totalPresent += present;
-                totalClasses += total;
-              } else {
-                subjectAttendance[subject] = {
-                  present: 0,
-                  total: 0,
-                  percentage: 0,
-                };
-              }
-            } else {
-              // Student doesn't have this subject
-              subjectAttendance[subject] = {
-                present: '-',
-                total: '-',
-                percentage: 'N/A',
-              };
-            }
-          });
-
-          return {
-            id: student.id,
-            firebaseKey: key,
-            name: student.name,
-            studentId: student.id,
-            prn: student.prn,
-            subjectAttendance,
-            totalPresent,
-            totalClasses,
-            overallPercentage: totalClasses > 0 
-              ? ((totalPresent / totalClasses) * 100).toFixed(2) 
-              : 0,
-          };
-        } catch (error) {
-          console.error(`❌ Error fetching attendance for ${student.name}:`, error);
-          
-          // Return student with zero attendance if API fails
-          const subjectAttendance = {};
-          subjectsList.forEach(subject => {
-            subjectAttendance[subject] = {
-              present: 0,
-              total: 0,
-              percentage: 0,
-            };
-          });
-
-          return {
-            id: student.id,
-            firebaseKey: key,
-            name: student.name,
-            studentId: student.id,
-            prn: student.prn,
-            subjectAttendance,
-            totalPresent: 0,
-            totalClasses: 0,
-            overallPercentage: 0,
-          };
-        }
-      });
-
-      // Wait for all student attendance data
-      const studentsData = await Promise.all(studentPromises);
-      
-      // Sort by name
-      const sortedStudents = studentsData.sort((a, b) => 
-        a.name.localeCompare(b.name)
-      );
-
-      setStudents(sortedStudents);
-      console.log('✅ Attendance data loaded for all students');
-
-    } catch (error) {
-      console.error('❌ Error fetching attendance data:', error);
-      Alert.alert('Error', 'Failed to load attendance data. Please try again.');
-      setStudents([]);
-      setSubjects([]);
-    } finally {
-      setLoading(false);
-    }
+  // 🔥 HELPER FUNCTION: Extract batch from roll_no
+  const extractBatchFromRollNo = (rollNo) => {
+    if (!rollNo) return null;
+    // Roll no format: "TY-C1-07" or "SY-B2-15"
+    const match = rollNo.match(/[A-Z]+-([A-Z]\d+)-\d+/);
+    return match && match[1] ? match[1] : null;
   };
 
+  const fetchAttendanceData = async () => {
+  setLoading(true);
+
+  try {
+    console.log('📊 Fetching attendance for class:', {
+      year,
+      division,
+      attendanceType,
+      startDate,
+      endDate,
+    });
+
+    const yearNumber = parseInt(year);
+
+    // ===============================
+    // ✅ FETCH STUDENTS FROM MONGODB
+    // ===============================
+    const response = await api.get("/api/admin/students", {
+      params: { year, division },
+    });
+
+    if (!response.data.success || response.data.students.length === 0) {
+      console.log('⚠️ No students found for this class');
+      setStudents([]);
+      setSubjects([]);
+      setLoading(false);
+      return;
+    }
+
+    // Keep SAME structure as Firebase: [key, student]
+    const filteredStudents = response.data.students.map(student => [
+      student.id,
+      student,
+    ]);
+
+    console.log(`✅ Found ${filteredStudents.length} students`);
+
+    // ===============================
+    // 🔥 COLLECT SUBJECTS / LABS
+    // ===============================
+    let subjectsList = [];
+
+    if (attendanceType === 'theory') {
+      const allSubjects = new Set();
+      filteredStudents.forEach(([_, student]) => {
+        if (student.subjects) {
+          student.subjects.forEach(subject => allSubjects.add(subject));
+        }
+      });
+      subjectsList = Array.from(allSubjects).sort();
+    } else {
+      const allLabs = new Set();
+      filteredStudents.forEach(([_, student]) => {
+        if (student.lab) {
+          student.lab.forEach(lab => allLabs.add(lab));
+        }
+      });
+      subjectsList = Array.from(allLabs).sort();
+    }
+
+    setSubjects(subjectsList);
+
+    console.log(
+      `📚 ${attendanceType === 'theory' ? 'Subjects' : 'Labs'} found:`,
+      subjectsList
+    );
+
+    // ===============================
+    // 📊 FETCH ATTENDANCE PER STUDENT
+    // ===============================
+    const studentPromises = filteredStudents.map(async ([key, student]) => {
+      try {
+        let attendanceData = [];
+
+        if (attendanceType === 'theory') {
+          const studentSubjects = student.subjects || [];
+
+          if (studentSubjects.length > 0) {
+            const res = await api.post('/api/attendance/student-summary', {
+              studentId: student.id,
+              year: yearNumber,
+              division,
+              subjects: studentSubjects,
+            });
+
+            attendanceData = res.data.subjects;
+          }
+        } else {
+          const studentBatch = extractBatchFromRollNo(student.roll_no);
+
+          const studentLabs = student.lab
+            ? student.lab
+                .filter(Boolean)
+                .map(labName => ({
+                  name: labName,
+                  batch: studentBatch,
+                }))
+            : [];
+
+          if (studentLabs.length > 0 && studentBatch) {
+            const res = await api.post(
+              '/api/lab-attendance/student-summary',
+              {
+                studentId: student.id,
+                year: yearNumber,
+                division,
+                labs: studentLabs,
+              }
+            );
+
+            attendanceData = res.data.labs.map(lab => ({
+              subject: lab.subject,
+              present: lab.present,
+              total: lab.total,
+            }));
+          }
+        }
+
+        // ===============================
+        // 📐 PROCESS ATTENDANCE DATA
+        // ===============================
+        const subjectAttendance = {};
+        let totalPresent = 0;
+        let totalClasses = 0;
+
+        const studentCourses =
+          attendanceType === 'theory'
+            ? student.subjects || []
+            : student.lab || [];
+
+        subjectsList.forEach(subject => {
+          if (studentCourses.includes(subject)) {
+            const subjectData = attendanceData.find(
+              item => item.subject === subject
+            );
+
+            if (subjectData) {
+              const present = subjectData.present;
+              const total = subjectData.total;
+              const percentage =
+                total > 0 ? ((present / total) * 100).toFixed(2) : 0;
+
+              subjectAttendance[subject] = {
+                present,
+                total,
+                percentage,
+              };
+
+              totalPresent += present;
+              totalClasses += total;
+            } else {
+              subjectAttendance[subject] = {
+                present: 0,
+                total: 0,
+                percentage: 0,
+              };
+            }
+          } else {
+            subjectAttendance[subject] = {
+              present: '-',
+              total: '-',
+              percentage: 'N/A',
+            };
+          }
+        });
+
+        return {
+          id: student.id,
+          name: student.name,
+          studentId: student.id,
+          prn: student.prn,
+          batch: extractBatchFromRollNo(student.roll_no),
+          rollNo: student.roll_no,
+          subjectAttendance,
+          totalPresent,
+          totalClasses,
+          overallPercentage:
+            totalClasses > 0
+              ? ((totalPresent / totalClasses) * 100).toFixed(2)
+              : 0,
+        };
+      } catch (error) {
+        console.error(
+          `❌ Error fetching attendance for ${student.name}:`,
+          error
+        );
+
+        const subjectAttendance = {};
+        subjectsList.forEach(subject => {
+          subjectAttendance[subject] = {
+            present: 0,
+            total: 0,
+            percentage: 0,
+          };
+        });
+
+        return {
+          id: student.id,
+          name: student.name,
+          studentId: student.id,
+          prn: student.prn,
+          batch: extractBatchFromRollNo(student.roll_no),
+          rollNo: student.roll_no,
+          subjectAttendance,
+          totalPresent: 0,
+          totalClasses: 0,
+          overallPercentage: 0,
+        };
+      }
+    });
+
+    const studentsData = await Promise.all(studentPromises);
+
+    // ===============================
+    // 🔢 SORT BY ROLL NUMBER
+    // ===============================
+    const sortedStudents = studentsData.sort((a, b) => {
+      const getRoll = rollNo => {
+        if (!rollNo) return 999999;
+        const match = rollNo.match(/-(\d+)$/);
+        return match ? parseInt(match[1]) : 999999;
+      };
+      return getRoll(a.rollNo) - getRoll(b.rollNo);
+    });
+
+    setStudents(sortedStudents);
+    console.log('✅ Attendance data loaded for all students');
+  } catch (error) {
+    console.error('❌ Error fetching attendance data:', error);
+    Alert.alert('Error', 'Failed to load attendance data. Please try again.');
+    setStudents([]);
+    setSubjects([]);
+  } finally {
+    setLoading(false);
+  }
+};
+
+
   const handleStudentClick = (student) => {
-    navigation.navigate('StudentRecordAdmin', {
+    navigation.navigate('StudentAttendanceProfile', {
       studentId: student.id,
       studentName: student.name,
       studentData: {
         ...student,
         year: parseInt(year),
         division: division,
-        subjects: Object.fromEntries(
-          subjects
-            .filter(sub => student.subjectAttendance[sub]?.present !== '-')
-            .map((sub, idx) => [idx, sub])
-        )
       }
     });
   };
 
   const generateHTMLTable = () => {
+    const dateRangeText = startDate && endDate 
+      ? `<p>Date Range: ${new Date(startDate).toLocaleDateString('en-IN')} to ${new Date(endDate).toLocaleDateString('en-IN')}</p>`
+      : '';
+
     const subjectColumns = subjects.map(subject => `
       <th colspan="3" class="subject-header">${subject}</th>
     `).join('');
@@ -238,42 +309,55 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
       <th class="sub-header">%</th>
     `).join('');
 
-    const studentRows = students.map((student, index) => {
-      const subjectCells = subjects.map(subject => {
-        const attendance = student.subjectAttendance[subject] || { present: 0, total: 0, percentage: 0 };
-        
-        if (attendance.present === '-') {
-          return `
-            <td colspan="3" class="na-cell">N/A</td>
-          `;
-        }
-        
-        const percentageClass = attendance.percentage >= 75 ? 'percentage-good' : 
-                                attendance.percentage >= 50 ? 'percentage-average' : 'percentage-poor';
-        
-        return `
-          <td>${attendance.present}</td>
-          <td>${attendance.total}</td>
-          <td class="${percentageClass}">${attendance.percentage}%</td>
-        `;
-      }).join('');
-
-      const overallClass = student.overallPercentage >= 75 ? 'percentage-good' : 
-                          student.overallPercentage >= 50 ? 'percentage-average' : 'percentage-poor';
-
+   const studentRows = students.map((student, index) => {
+  // Determine overall color
+  const overallColor = student.overallPercentage >= 75 ? '#10b981' : 
+                      student.overallPercentage >= 50 ? '#f59e0b' : '#ef4444';
+  
+  const subjectCells = subjects.map(subject => {
+    const attendance = student.subjectAttendance[subject] || { present: 0, total: 0, percentage: 0 };
+    
+    if (attendance.present === '-') {
       return `
-        <tr class="data-row">
-          <td class="row-number">${index + 1}</td>
-          <td class="student-name">${student.name}</td>
-          <td class="student-id">${student.studentId}</td>
-          <td class="student-prn">${student.prn || 'N/A'}</td>
-          ${subjectCells}
-          <td class="overall-data">${student.totalPresent}</td>
-          <td class="overall-data">${student.totalClasses}</td>
-          <td class="${overallClass} overall-percentage">${student.overallPercentage}%</td>
-        </tr>
+        <td colspan="3" class="na-cell">N/A</td>
       `;
-    }).join('');
+    }
+    
+    const percentageClass = attendance.percentage >= 75 ? 'percentage-good' : 
+                            attendance.percentage >= 50 ? 'percentage-average' : 'percentage-poor';
+    
+    return `
+      <td>${attendance.present}</td>
+      <td>${attendance.total}</td>
+      <td class="${percentageClass}">${attendance.percentage}%</td>
+    `;
+  }).join('');
+
+  const overallClass = student.overallPercentage >= 75 ? 'percentage-good' : 
+                      student.overallPercentage >= 50 ? 'percentage-average' : 'percentage-poor';
+
+  const batchCell = attendanceType === 'lab' 
+    ? `<td class="student-batch" style="color: ${overallColor}; font-weight: 600;">${student.batch || 'N/A'}</td>`
+    : '';
+
+  return `
+    <tr class="data-row">
+      <td class="row-number" style="color: ${overallColor}; font-weight: 600;">${index + 1}</td>
+      <td class="student-name" style="color: ${overallColor}; font-weight: 600;">${student.name}</td>
+      <td class="student-id" style="color: ${overallColor}; font-weight: 600;">${student.studentId}</td>
+      <td class="student-prn" style="color: ${overallColor}; font-weight: 600;">${student.prn || 'N/A'}</td>
+      ${batchCell}
+      ${subjectCells}
+      <td class="overall-data">${student.totalPresent}</td>
+      <td class="overall-data">${student.totalClasses}</td>
+      <td class="${overallClass} overall-percentage">${student.overallPercentage}%</td>
+    </tr>
+  `;
+}).join('');
+
+    const batchHeader = attendanceType === 'lab' 
+      ? '<th rowspan="2">Batch</th>'
+      : '';
 
     return `
       <!DOCTYPE html>
@@ -281,7 +365,7 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Class Attendance Record</title>
+          <title>${attendanceType === 'theory' ? 'Theory' : 'Lab'} Attendance Record</title>
           <style>
             body {
               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -296,7 +380,7 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
             .header {
               text-align: center;
               margin-bottom: 10px;
-              border-bottom: 3px solid #4f46e5;
+              border-bottom: 3px solid ${attendanceType === 'lab' ? '#8b5cf6' : '#4f46e5'};
               padding-bottom: 8px;
             }
             .header h1 {
@@ -346,14 +430,14 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
               font-size: 8px;
             }
             .subject-header {
-              background-color: #4f46e5;
+              background-color: ${attendanceType === 'lab' ? '#8b5cf6' : '#4f46e5'};
               color: white;
               padding: 6px 3px;
               font-size: 8px;
               white-space: nowrap;
             }
             .sub-header {
-              background-color: #6366f1;
+              background-color: ${attendanceType === 'lab' ? '#a78bfa' : '#6366f1'};
               color: white;
               font-size: 7px;
               padding: 4px 2px;
@@ -385,6 +469,13 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
               background-color: #f9fafb;
               min-width: 70px;
               font-size: 7px;
+            }
+            .student-batch {
+              background-color: #fef3c7;
+              min-width: 40px;
+              font-size: 8px;
+              font-weight: 600;
+              color: #92400e;
             }
             .data-row:nth-child(even) {
               background-color: #f9fafb;
@@ -451,9 +542,10 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
         </head>
         <body>
           <div class="header">
-            <h1>📊 Class Attendance Record</h1>
+            <h1>${attendanceType === 'theory' ? '📊' : '🧪'} ${attendanceType === 'theory' ? 'Theory' : 'Lab'} Attendance Record</h1>
             <p><strong>${className} - ${sectionName}</strong></p>
             <p>Year ${year} | Division ${division}</p>
+            ${dateRangeText}
           </div>
 
           <div class="info-section">
@@ -468,7 +560,10 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
               })}
             </div>
             <div class="info-item">
-              <strong>Subjects:</strong> ${subjects.length}
+              <strong>${attendanceType === 'theory' ? 'Subjects' : 'Labs'}:</strong> ${subjects.length}
+            </div>
+            <div class="info-item">
+              <strong>Type:</strong> ${attendanceType === 'theory' ? 'Theory Classes' : 'Lab Sessions'}
             </div>
           </div>
 
@@ -480,6 +575,7 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
                   <th rowspan="2">Student Name</th>
                   <th rowspan="2">Student ID</th>
                   <th rowspan="2">PRN</th>
+                  ${batchHeader}
                   ${subjectColumns}
                   <th colspan="3" class="overall-header">Overall Attendance</th>
                 </tr>
@@ -560,8 +656,10 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="#fff" />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4f46e5" />
-          <Text style={styles.loadingText}>Loading attendance data...</Text>
+          <ActivityIndicator size="large" color={attendanceType === 'lab' ? '#8b5cf6' : '#4f46e5'} />
+          <Text style={styles.loadingText}>
+            Loading {attendanceType === 'theory' ? 'theory' : 'lab'} attendance data...
+          </Text>
         </View>
       </SafeAreaView>
     );
@@ -574,12 +672,22 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Class Attendance Record</Text>
+          <Text style={styles.headerTitle}>
+            {attendanceType === 'theory' ? '📚 Theory' : '🧪 Lab'} Attendance Record
+          </Text>
           <Text style={styles.headerSubtitle}>
             {className} - {sectionName} | {students.length} students
           </Text>
+          {startDate && endDate && (
+            <Text style={styles.dateRangeText}>
+              📅 {new Date(startDate).toLocaleDateString('en-IN')} → {new Date(endDate).toLocaleDateString('en-IN')}
+            </Text>
+          )}
         </View>
-        <TouchableOpacity style={styles.printButton} onPress={handlePrint}>
+        <TouchableOpacity style={[
+          styles.printButton,
+          attendanceType === 'lab' && styles.printButtonLab
+        ]} onPress={handlePrint}>
           <Text style={styles.printButtonText}>🖨️ Print</Text>
         </TouchableOpacity>
       </View>
@@ -627,14 +735,38 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
                 <Text style={[styles.headerCell, styles.nameCell]}>Student Name</Text>
                 <Text style={[styles.headerCell, styles.idCell]}>ID</Text>
                 <Text style={[styles.headerCell, styles.prnCell]}>PRN</Text>
+                {attendanceType === 'lab' && (
+                  <Text style={[styles.headerCell, styles.batchCell]}>Batch</Text>
+                )}
                 
                 {subjects.map((subject) => (
                   <View key={subject} style={styles.subjectHeaderGroup}>
-                    <Text style={[styles.headerCell, styles.subjectMainHeader]}>{subject}</Text>
-                    <View style={styles.subjectSubHeaders}>
-                      <Text style={[styles.subHeaderCell, styles.attendanceSubCell]}>Att.</Text>
-                      <Text style={[styles.subHeaderCell, styles.attendanceSubCell]}>Tot.</Text>
-                      <Text style={[styles.subHeaderCell, styles.attendanceSubCell]}>%</Text>
+                    <Text style={[
+                      styles.headerCell, 
+                      styles.subjectMainHeader,
+                      attendanceType === 'lab' && styles.labSubjectHeader
+                    ]}>
+                      {subject}
+                    </Text>
+                    <View style={[
+                      styles.subjectSubHeaders,
+                      attendanceType === 'lab' && styles.labSubHeadersContainer
+                    ]}>
+                      <Text style={[
+                        styles.subHeaderCell, 
+                        styles.attendanceSubCell,
+                        attendanceType === 'lab' && styles.labSubHeader
+                      ]}>Att.</Text>
+                      <Text style={[
+                        styles.subHeaderCell, 
+                        styles.attendanceSubCell,
+                        attendanceType === 'lab' && styles.labSubHeader
+                      ]}>Tot.</Text>
+                      <Text style={[
+                        styles.subHeaderCell, 
+                        styles.attendanceSubCell,
+                        attendanceType === 'lab' && styles.labSubHeader
+                      ]}>%</Text>
                     </View>
                   </View>
                 ))}
@@ -650,72 +782,89 @@ const ClassAttendanceRecord = ({ route, navigation }) => {
               </View>
 
               {/* Table Rows */}
-              {students.map((student, index) => (
-                <TouchableOpacity
-                  key={student.id}
-                  onPress={() => handleStudentClick(student)}
-                  activeOpacity={0.7}
-                >
-                  <View 
-                    style={[
-                      styles.tableRow, 
-                      index % 2 === 0 ? styles.evenRow : styles.oddRow
-                    ]}
-                  >
-                    <Text style={[styles.cell, styles.noCell]}>{index + 1}</Text>
-                    <Text style={[styles.cell, styles.nameCell, styles.nameText]}>{student.name}</Text>
-                    <Text style={[styles.cell, styles.idCell]}>{student.studentId}</Text>
-                    <Text style={[styles.cell, styles.prnCell]}>{student.prn || 'N/A'}</Text>
-                    
-                    {subjects.map((subject) => {
-                      const attendance = student.subjectAttendance[subject] || { 
-                        present: 0, 
-                        total: 0, 
-                        percentage: 0 
-                      };
+              {students.map((student, index) => {
+  // Determine the color based on overall percentage
+  const overallColor = 
+    student.overallPercentage >= 75 ? '#10b981' : 
+    student.overallPercentage >= 50 ? '#f59e0b' : '#ef4444';
+  
+  return (
+    <TouchableOpacity
+      key={student.id}
+      onPress={() => handleStudentClick(student)}
+      activeOpacity={0.7}
+    >
+      <View 
+        style={[
+          styles.tableRow, 
+          index % 2 === 0 ? styles.evenRow : styles.oddRow
+        ]}
+      >
+        <Text style={[styles.cell, styles.noCell, { color: overallColor, fontWeight: '600' }]}>
+          {index + 1}
+        </Text>
+        <Text style={[styles.cell, styles.nameCell, styles.nameText, { color: overallColor }]}>
+          {student.name}
+        </Text>
+        <Text style={[styles.cell, styles.idCell, { color: overallColor, fontWeight: '600' }]}>
+          {student.studentId}
+        </Text>
+        <Text style={[styles.cell, styles.prnCell, { color: overallColor, fontWeight: '600' }]}>
+          {student.prn || 'N/A'}
+        </Text>
+        {attendanceType === 'lab' && (
+          <Text style={[styles.cell, styles.batchCell, styles.batchText, { color: overallColor }]}>
+            {student.batch || 'N/A'}
+          </Text>
+        )}
+        
+        {subjects.map((subject) => {
+          const attendance = student.subjectAttendance[subject] || { 
+            present: 0, 
+            total: 0, 
+            percentage: 0 
+          };
 
-                      if (attendance.present === '-') {
-                        return (
-                          <Text 
-                            key={subject} 
-                            style={[styles.cell, styles.naCell, { width: 210 }]}
-                          >
-                            N/A
-                          </Text>
-                        );
-                      }
-                      
-                      const percentageColor = 
-                        attendance.percentage >= 75 ? '#10b981' : 
-                        attendance.percentage >= 50 ? '#f59e0b' : '#ef4444';
-                      
-                      return (
-                        <React.Fragment key={subject}>
-                          <Text style={[styles.cell, styles.attendanceSubCell]}>{attendance.present}</Text>
-                          <Text style={[styles.cell, styles.attendanceSubCell]}>{attendance.total}</Text>
-                          <Text style={[styles.cell, styles.attendanceSubCell, { color: percentageColor, fontWeight: 'bold' }]}>
-                            {attendance.percentage}%
-                          </Text>
-                        </React.Fragment>
-                      );
-                    })}
-                    
-                    <Text style={[styles.cell, styles.overallSubCell, styles.boldText]}>{student.totalPresent}</Text>
-                    <Text style={[styles.cell, styles.overallSubCell, styles.boldText]}>{student.totalClasses}</Text>
-                    <Text style={[
-                      styles.cell, 
-                      styles.overallSubCell, 
-                      styles.boldText,
-                      { 
-                        color: student.overallPercentage >= 75 ? '#10b981' : 
-                               student.overallPercentage >= 50 ? '#f59e0b' : '#ef4444' 
-                      }
-                    ]}>
-                      {student.overallPercentage}%
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
+          if (attendance.present === '-') {
+            return (
+              <Text 
+                key={subject} 
+                style={[styles.cell, styles.naCell, { width: 210 }]}
+              >
+                N/A
+              </Text>
+            );
+          }
+          
+          const percentageColor = 
+            attendance.percentage >= 75 ? '#10b981' : 
+            attendance.percentage >= 50 ? '#f59e0b' : '#ef4444';
+          
+          return (
+            <React.Fragment key={subject}>
+              <Text style={[styles.cell, styles.attendanceSubCell]}>{attendance.present}</Text>
+              <Text style={[styles.cell, styles.attendanceSubCell]}>{attendance.total}</Text>
+              <Text style={[styles.cell, styles.attendanceSubCell, { color: percentageColor, fontWeight: 'bold' }]}>
+                {attendance.percentage}%
+              </Text>
+            </React.Fragment>
+          );
+        })}
+        
+        <Text style={[styles.cell, styles.overallSubCell, styles.boldText]}>{student.totalPresent}</Text>
+        <Text style={[styles.cell, styles.overallSubCell, styles.boldText]}>{student.totalClasses}</Text>
+        <Text style={[
+          styles.cell, 
+          styles.overallSubCell, 
+          styles.boldText,
+          { color: overallColor }
+        ]}>
+          {student.overallPercentage}%
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+})}
             </View>
           </ScrollView>
         </ScrollView>
@@ -761,11 +910,20 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     marginTop: 4,
   },
+  dateRangeText: {
+    fontSize: 13,
+    color: '#8b5cf6',
+    marginTop: 4,
+    fontWeight: '600',
+  },
   printButton: {
     backgroundColor: '#4f46e5',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
+  },
+  printButtonLab: {
+    backgroundColor: '#8b5cf6',
   },
   printButtonText: {
     color: '#fff',
@@ -861,6 +1019,14 @@ const styles = StyleSheet.create({
     width: 120,
     minWidth: 120,
   },
+  batchCell: {
+    width: 80,
+    minWidth: 80,
+  },
+  batchText: {
+    
+    fontWeight: '600',
+  },
   subjectHeaderGroup: {
     borderLeftWidth: 1,
     borderLeftColor: '#374151',
@@ -870,15 +1036,24 @@ const styles = StyleSheet.create({
     padding: 8,
     fontSize: 11,
   },
+  labSubjectHeader: {
+    backgroundColor: '#8b5cf6',
+  },
   subjectSubHeaders: {
     flexDirection: 'row',
     backgroundColor: '#6366f1',
+  },
+  labSubHeadersContainer: {
+    backgroundColor: '#a78bfa',
   },
   subHeaderCell: {
     padding: 6,
     color: '#fff',
     fontSize: 10,
     fontWeight: '500',
+  },
+  labSubHeader: {
+    backgroundColor: '#a78bfa',
   },
   attendanceSubCell: {
     width: 70,

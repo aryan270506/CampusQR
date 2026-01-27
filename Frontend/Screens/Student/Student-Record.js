@@ -3,15 +3,22 @@ import {
   ScrollView,
   View,
   Text,
-  StyleSheet,
   ActivityIndicator,
   RefreshControl,
+  StyleSheet,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { getItem } from '../../src/utils/storage';
-import { ref, get } from 'firebase/database';
-import { db } from '../firebase';
 import api from '../../src/utils/axios';
+
+
+const extractBatchFromRollNo = (rollNo) => {
+  if (!rollNo) return null;
+  // FY-A1-01 → A1
+  const parts = rollNo.split("-");
+  return parts.length >= 2 ? parts[1] : null;
+};
+
 
 /* -------------------- Circular Progress -------------------- */
 const AttendanceCircle = ({ percentage, size = 120 }) => {
@@ -20,6 +27,9 @@ const AttendanceCircle = ({ percentage, size = 120 }) => {
     if (percentage < 80) return '#F59E0B';
     return '#10B981';
   };
+
+
+
 
   const radius = (size - 12) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -66,7 +76,7 @@ const AttendanceCircle = ({ percentage, size = 120 }) => {
 };
 
 /* -------------------- Subject Card -------------------- */
-const SubjectCard = ({ subject, present, total, isLab = false }) => {
+const SubjectCard = ({ subject, present, total }) => {
   const percentage =
     total > 0 ? Math.round((present / total) * 100) : 0;
 
@@ -75,7 +85,6 @@ const SubjectCard = ({ subject, present, total, isLab = false }) => {
       <View style={styles.subjectInfo}>
         <View style={styles.subjectHeader}>
           <Text style={styles.subjectName}>{subject}</Text>
-          
         </View>
         <Text style={styles.subjectStats}>
           {present}/{total} classes
@@ -98,155 +107,94 @@ export default function AttendanceScreen() {
     division: '',
   });
 
-  // Dummy attendance data generator
-  const generateDummyAttendance = () => {
-    return {
-      present: Math.floor(Math.random() * 20) + 10, // Random 10-30
-      total: Math.floor(Math.random() * 15) + 25, // Random 25-40
-    };
-  };
-
   const fetchAttendanceData = async () => {
     try {
       setLoading(true);
 
       const studentId = await getItem('studentId');
-      const studentKey = await getItem('studentKey');
+      if (!studentId) return;
 
-      if (!studentId || !studentKey) {
-        console.log('❌ Missing studentId or studentKey');
-        return;
-      }
+      /* -------- MongoDB: Student + Subjects + Labs -------- */
+      const studentRes = await api.get(
+        `/api/student/me/${studentId}`
+      );
 
-      /* -------- Fetch student from Firebase -------- */
-      const studentRef = ref(db, `students/${studentKey}`);
-      const snapshot = await get(studentRef);
-
-      if (!snapshot.exists()) {
-        console.log('❌ Student not found at students/' + studentKey);
-        return;
-      }
-
-      const studentData = snapshot.val();
-
-      console.log('📚 Firebase Student Data:', JSON.stringify(studentData, null, 2));
-
-      // Get subjects list
-      const subjectsList = studentData.subjects 
-        ? Object.values(studentData.subjects) 
-        : [];
-
-      // Get labs list - handle both object and array formats
-      let labsList = [];
-      if (studentData.lab) {
-        if (Array.isArray(studentData.lab)) {
-          labsList = studentData.lab.filter(Boolean); // Remove null/undefined
-        } else if (typeof studentData.lab === 'object') {
-          labsList = Object.values(studentData.lab).filter(Boolean);
-        }
-      }
-
-      console.log('📖 Subjects:', subjectsList);
-      console.log('🔬 Labs:', labsList);
+      const student = studentRes.data;
 
       setStudentInfo({
-        name: studentData.name || 'Student',
-        year: studentData.year,
-        division: studentData.division,
+        name: student.name || 'Student',
+        year: student.year,
+        division: student.division,
       });
 
-      if (subjectsList.length === 0 && labsList.length === 0) {
-        setSubjects([]);
-        setLabs([]);
-        return;
-      }
+      const subjectsList = student.subjects || [];
+      const labsList = student.lab || [];
 
-      try {
-        /* -------- Try to fetch attendance from backend -------- */
-        const response = await api.post(
-          '/api/attendance/student-summary',
-          {
-            studentId,
-            year: Number(studentData.year),
-            division: studentData.division,
-            subjects: subjectsList,
-            labs: labsList, // Include labs in the request
-          }
-        );
-
-        console.log('✅ Backend response:', response.data);
-
-        // Check if backend returned labs
-        const backendSubjects = response.data.subjects || [];
-        const backendLabs = response.data.labs || [];
-
-        console.log('📊 Backend subjects count:', backendSubjects.length);
-        console.log('📊 Backend labs count:', backendLabs.length);
-
-        // If backend didn't return labs, create dummy data for them
-        let finalLabs = backendLabs;
-        if (labsList.length > 0 && backendLabs.length === 0) {
-          console.log('⚠️ Backend did not return labs, generating dummy lab data');
-          finalLabs = labsList.map(lab => {
-            console.log('✅ Creating dummy lab:', lab);
-            return {
-              subject: lab,
-              ...generateDummyAttendance(),
-              isLab: true,
-            };
-          });
+      /* -------- THEORY ATTENDANCE (UNCHANGED) -------- */
+      const theoryRes = await api.post(
+        '/api/attendance/student-summary',
+        {
+          studentId,
+          year: Number(student.year),
+          division: student.division,
+          subjects: subjectsList,
         }
+      );
 
-        // If backend didn't return subjects, create dummy data
-        let finalSubjects = backendSubjects;
-        if (subjectsList.length > 0 && backendSubjects.length === 0) {
-          console.log('⚠️ Backend did not return subjects, generating dummy subject data');
-          finalSubjects = subjectsList.map(subject => {
-            console.log('✅ Creating dummy subject:', subject);
-            return {
-              subject,
-              ...generateDummyAttendance(),
-            };
-          });
-        }
+      setSubjects(theoryRes.data.subjects || []);
 
-        console.log('📊 Final subjects for display:', finalSubjects);
-        console.log('📊 Final labs for display:', finalLabs);
+      /* -------- LAB ATTENDANCE (UNCHANGED) -------- */
+      const batch = extractBatchFromRollNo(student.roll_no);
 
-        setSubjects(finalSubjects);
-        setLabs(finalLabs);
-      } catch (error) {
-        console.log('⚠️ Backend error, using dummy data:', error.message);
-        
-        /* -------- Use dummy data if backend fails -------- */
-        const subjectsWithAttendance = subjectsList.map(subject => {
-          console.log('✅ Creating subject:', subject);
-          return {
-            subject,
-            ...generateDummyAttendance(),
-          };
-        });
+if (!batch) {
+  console.log("❌ Batch not found from roll number");
+  setLabs([]);
+  return;
+}
 
-        const labsWithAttendance = labsList.map(lab => {
-          console.log('✅ Creating lab:', lab);
-          return {
-            subject: lab,
-            ...generateDummyAttendance(),
-            isLab: true,
-          };
-        });
+const labsWithBatch = labsList
+  .filter(Boolean)
+  .map((labName) => ({
+    name: labName,
+    batch: batch,
+  }));
 
-        console.log('📊 Final subjects:', subjectsWithAttendance);
-        console.log('📊 Final labs:', labsWithAttendance);
+console.log("🧪 Sending labs with batch:", labsWithBatch);
 
-        setSubjects(subjectsWithAttendance);
-        setLabs(labsWithAttendance);
-      }
+const labRes = await api.post(
+  '/api/lab-attendance/student-summary',
+  {
+    studentId,
+    year: Number(student.year),
+    division: student.division,
+    labs: labsWithBatch, // ✅ FIXED
+  }
+);
+
+
+console.log("🧪 Lab API response:", labRes.data);
+
+setLabs(
+  (labRes.data.labs || []).map((lab, index) => ({
+    subject: labsList[index], // ✅ attach name from MongoDB
+    present: lab.present,
+    total: lab.total,
+    isLab: true,
+  }))
+);
+
+console.log("🧪 Mongo labsList:", labsList);
+console.log("🧪 Lab response keys:", Object.keys(labRes.data));
+console.log("🧪 labRes.data.labs:", labRes.data.labs);
+
+
     } catch (error) {
       console.error(
         '❌ Attendance fetch error:',
         error.response?.data || error.message
       );
+      setSubjects([]);
+      setLabs([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -262,10 +210,10 @@ export default function AttendanceScreen() {
     fetchAttendanceData();
   };
 
-  // Calculate overall attendance including labs
+  /* -------- Overall Attendance -------- */
   const allItems = [...subjects, ...labs];
-  const totalPresent = allItems.reduce((sum, s) => sum + s.present, 0);
-  const totalClasses = allItems.reduce((sum, s) => sum + s.total, 0);
+  const totalPresent = allItems.reduce((s, i) => s + i.present, 0);
+  const totalClasses = allItems.reduce((s, i) => s + i.total, 0);
   const overallAttendance =
     totalClasses > 0
       ? Math.round((totalPresent / totalClasses) * 100)
@@ -281,10 +229,6 @@ export default function AttendanceScreen() {
       </View>
     );
   }
-
-  console.log('🎨 Rendering with subjects:', subjects.length, 'labs:', labs.length);
-  console.log('🎨 Subjects state:', subjects);
-  console.log('🎨 Labs state:', labs);
 
   return (
     <ScrollView
@@ -310,41 +254,26 @@ export default function AttendanceScreen() {
       </View>
 
       <View style={styles.subjectsSection}>
-        {/* Theory Subjects Section */}
         {subjects.length > 0 && (
           <>
             <Text style={styles.sectionTitle}>Theory Subjects</Text>
             {subjects.map((s, i) => (
-              <SubjectCard
-                key={`subject-${i}`}
-                subject={s.subject}
-                present={s.present}
-                total={s.total}
-                isLab={false}
-              />
+              <SubjectCard key={`s-${i}`} {...s} />
             ))}
           </>
         )}
 
-        {/* Lab Subjects Section */}
         {labs.length > 0 && (
           <>
             <Text style={[styles.sectionTitle, { marginTop: 24 }]}>
               Lab Subjects
             </Text>
-            {labs.map((lab, i) => (
-              <SubjectCard
-                key={`lab-${i}`}
-                subject={lab.subject}
-                present={lab.present}
-                total={lab.total}
-                isLab={true}
-              />
+            {labs.map((l, i) => (
+              <SubjectCard key={`l-${i}`} {...l} />
             ))}
           </>
         )}
 
-        {/* Empty State */}
         {subjects.length === 0 && labs.length === 0 && (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateTitle}>
@@ -359,6 +288,7 @@ export default function AttendanceScreen() {
     </ScrollView>
   );
 }
+
 
 // Styles
 const styles = StyleSheet.create({
