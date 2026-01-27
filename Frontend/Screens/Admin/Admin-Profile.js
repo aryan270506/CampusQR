@@ -465,8 +465,8 @@ export default function AdminProfile() {
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{admin.name ? admin.name.substring(0, 2).toUpperCase() : "AD"}</Text>
           </View>
-          <Text style={styles.name}>{admin.email ? admin.email.split('@')[0] : 'Admin User'}</Text>
-          <Text style={styles.role}>Administrator</Text>
+          <Text style={styles.name}>Administrator</Text>
+          <Text style={styles.role}>{admin.branch || 'All Branches'}</Text>
         </View>
 
         <View style={styles.card}>
