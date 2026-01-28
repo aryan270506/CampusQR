@@ -479,19 +479,19 @@ export default function AdminProfile() {
           <Text style={styles.sectionTitle}>Upload Data</Text>
           <TouchableOpacity style={styles.uploadCard} onPress={handleUploadStudents}>
             <Text style={styles.uploadTitle}>Upload Students</Text>
-            <Text style={styles.uploadSubtitle}>JSON</Text>
+            <Text style={styles.uploadSubtitle}>.json file only</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.uploadCard} onPress={handleUploadTeachers}>
             <Text style={styles.uploadTitle}>Upload Teachers</Text>
-            <Text style={styles.uploadSubtitle}>JSON</Text>
+            <Text style={styles.uploadSubtitle}>.json file only</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.uploadCard} onPress={handleUploadAdmins}>
             <Text style={styles.uploadTitle}>Upload Admins</Text>
-            <Text style={styles.uploadSubtitle}>JSON</Text>
+            <Text style={styles.uploadSubtitle}>.json file only</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.uploadCard} onPress={handleUploadParents}>
             <Text style={styles.uploadTitle}>Upload Parents</Text>
-            <Text style={styles.uploadSubtitle}>JSON</Text>
+            <Text style={styles.uploadSubtitle}>.json file only</Text>
           </TouchableOpacity>
         </View>
 

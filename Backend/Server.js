@@ -59,7 +59,14 @@ app.use("/uploads", express.static("uploads"));
 /* ===============================
    🔹 MONGODB CONNECTION
 ================================ */
-const MONGO_URI = "mongodb://localhost:27017/Attendence-System";
+/* ===============================
+   🔹 MONGODB CONNECTION
+================================ */
+const LOCAL_MONGO = "mongodb://localhost:27017/Attendence-System";
+
+const MONGO_URI = process.env.MONGO_URI
+  ? process.env.MONGO_URI
+  : LOCAL_MONGO;
 
 mongoose
   .connect(MONGO_URI)
@@ -79,6 +86,7 @@ mongoose.connection.on("disconnected", () => {
 mongoose.connection.on("error", (err) => {
   console.error("❌ MongoDB runtime error:", err.message);
 });
+
 
 /* ===============================
    🔹 ROOT HEALTH CHECK
@@ -127,7 +135,8 @@ initSocket(server);
 /* ===============================
    🔹 SERVER START
 ================================ */
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });

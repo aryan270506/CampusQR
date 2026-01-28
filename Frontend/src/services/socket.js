@@ -22,7 +22,7 @@ export const connectSocket = ({ userId, role }) => {
   }
 
   // 🔌 Create new socket connection
-  socket = io("http://10.21.176.173:3000", {
+  socket = io("https://campusqr-2.onrender.com", {
     transports: ["websocket"],
     forceNew: true,
     reconnection: true,
