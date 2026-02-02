@@ -1,20 +1,28 @@
 {
   "expo": {
     "name": "Attendence_System",
-    "slug": "Attendence_System",
+    "slug": "attendance-system",
     "version": "1.0.0",
+
+    "entryPoint": "./index.js",
+
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+
+    "platforms": ["ios", "android", "web"],
+
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+
     "ios": {
       "supportsTablet": true
     },
+
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -22,11 +30,13 @@
       },
       "edgeToEdgeEnabled": true
     },
+
     "web": {
+      "bundler": "metro",
+      "output": "single",
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      "expo-barcode-scanner"
-    ]
+
+    "plugins": ["expo-barcode-scanner"]
   }
 }

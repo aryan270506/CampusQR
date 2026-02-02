@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const express = require("express");
 const mongoose = require("mongoose");
 const http = require("http");
@@ -64,9 +66,19 @@ app.use("/uploads", express.static("uploads"));
 ================================ */
 const LOCAL_MONGO = "mongodb://localhost:27017/Attendence-System";
 
-const MONGO_URI = process.env.MONGO_URI
-  ? process.env.MONGO_URI
-  : LOCAL_MONGO;
+const MONGO_URI =
+  process.env.NODE_ENV === "production"
+    ? process.env.MONGO_URI
+    : "mongodb://localhost:27017/Attendence-System";
+
+// 🔍 DEBUG LOGS (temporary)
+console.log("🌍 NODE_ENV:", process.env.NODE_ENV);
+console.log(
+  "🗄️ Mongo URI:",
+  MONGO_URI.includes("mongodb+srv") ? "Atlas" : "Local"
+);
+
+
 
 mongoose
   .connect(MONGO_URI)
