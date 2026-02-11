@@ -22,7 +22,7 @@ export const connectSocket = ({ userId, role }) => {
   }
 
   // 🔌 Create new socket connection
-  socket = io("http://10.69.46.173:3000", {
+  socket = io("https:10.69.46.173:3000", {
     transports: ["websocket"],
     forceNew: true,
     reconnection: true,
