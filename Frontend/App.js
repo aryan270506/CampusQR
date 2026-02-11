@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
+import { registerRootComponent } from 'expo';
 
 import LoginScreen from './Screens/Login/login.js';
 
@@ -40,7 +41,7 @@ import ParentAttendanceScreen from './Screens/Parents/ParentDashboard.js';
 
 const Stack = createNativeStackNavigator();
 
-export default function App() {
+ function App() {
   const [initialRoute, setInitialRoute] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -122,3 +123,7 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
+
+
+registerRootComponent(App);
+export default App;

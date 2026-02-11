@@ -4,7 +4,7 @@
     "slug": "attendance-system",
     "version": "1.0.0",
 
-    "entryPoint": "./index.js",
+    "entryPoint": "./App.js",
 
     "orientation": "portrait",
     "icon": "./assets/icon.png",
